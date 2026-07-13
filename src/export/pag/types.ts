@@ -42,7 +42,16 @@ export interface PagLayerBase {
   duration: number
   transform: PagTransform
   masks?: PagMask[]
+  effects?: PagFastBlurEffect[]
   trackMatteType?: PagTrackMatteType
+}
+
+export interface PagFastBlurEffect {
+  type: 'fast-blur'
+  blurriness: PagProperty<number>
+  blurDimensions: 0
+  repeatEdgePixels: boolean
+  effectOpacity: number
 }
 
 export type PagTrackMatteType = 'alpha' | 'alpha-inverted' | 'luma' | 'luma-inverted'

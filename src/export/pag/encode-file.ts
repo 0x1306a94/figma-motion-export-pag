@@ -29,6 +29,7 @@ const enum TagCode {
   ImageBytes = 47,
   ImageBytesV3 = 49,
   LayerAttributesV2 = 52,
+  FastBlurEffect = 60,
 }
 
 const enum LayerType {
@@ -88,11 +89,28 @@ function writeLayer(stream: EncodeStream, layer: PagLayer): void {
     content.writeEncodedUint(layer.id)
     writeLayerAttributes(content, layer)
     for (const mask of layer.masks ?? []) writeMask(content, mask)
+    for (const effect of layer.effects ?? []) writeFastBlurEffect(content, effect)
     writeTransform(content, layer.transform)
     if (layer.type === 'solid') writeSolidColor(content, layer)
     else if (layer.type === 'shape') writeShape(content, layer)
     else writeTag(content, TagCode.ImageReference, (reference) => reference.writeEncodedUint(layer.imageId))
     writeEndTag(content)
+  })
+}
+
+function writeFastBlurEffect(
+  stream: EncodeStream,
+  effect: import('./types').PagFastBlurEffect,
+): void {
+  writeTag(stream, TagCode.FastBlurEffect, (content) => {
+    const flags = new EncodeStream()
+    const values = new EncodeStream()
+    writeNumberProperty(flags, values, effect.blurriness, 0)
+    writeStaticByteProperty(flags, values, effect.blurDimensions, 0)
+    writeStaticBooleanProperty(flags, values, effect.repeatEdgePixels, false)
+    writeByteProperty(flags, values, effect.effectOpacity, 255)
+    flags.writeBit(false)
+    appendAttributeBlock(content, flags, values)
   })
 }
 
@@ -403,6 +421,19 @@ function writeStaticByteProperty(
   if (!exists) return
   flags.writeBit(false)
   values.writeUint8(value)
+}
+
+function writeStaticBooleanProperty(
+  flags: EncodeStream,
+  values: EncodeStream,
+  value: boolean,
+  defaultValue: boolean,
+): void {
+  const exists = value !== defaultValue
+  flags.writeBit(exists)
+  if (!exists) return
+  flags.writeBit(false)
+  values.writeUint8(value ? 1 : 0)
 }
 
 function writeStaticColorProperty(

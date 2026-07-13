@@ -231,3 +231,66 @@ test('任意单选叶子节点可作为导出根节点', async () => {
   assert.equal(result.fileName, '#solid Selected Rectangle.pag')
   assert.ok(new TextDecoder().decode(result.bytes).includes('Selected Rectangle'))
 })
+
+test('普通 TEXT 子图层会被忽略且不中断其他图层导出', async () => {
+  const root = {
+    id: '72:163',
+    name: 'Frame10',
+    type: 'FRAME',
+    parent: { type: 'PAGE' },
+    animations: {},
+    timelines: [{ duration: 2 }],
+    absoluteTransform: [
+      [1, 0, 0],
+      [0, 1, 0],
+    ],
+    absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 600 },
+    opacity: 1,
+    fills: [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 }, visible: true }],
+    effects: [],
+    blendMode: 'PASS_THROUGH',
+    children: [] as SceneNode[],
+  }
+  const text = {
+    id: '72:165',
+    name: 'Figma Motion to PAG',
+    type: 'TEXT',
+    visible: true,
+  } as unknown as SceneNode
+  const imageLikeSolid = {
+    id: '72:164',
+    name: '#solid Background',
+    type: 'RECTANGLE',
+    parent: root,
+    visible: true,
+    animations: {},
+    effects: [],
+    blendMode: 'NORMAL',
+    isMask: false,
+    topLeftRadius: 0,
+    topRightRadius: 0,
+    bottomLeftRadius: 0,
+    bottomRightRadius: 0,
+    fills: [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 }, visible: true }],
+    strokes: [],
+    strokeWeight: 0,
+    width: 400,
+    height: 600,
+    opacity: 1,
+    absoluteTransform: [
+      [1, 0, 0],
+      [0, 1, 0],
+    ],
+  } as unknown as SceneNode
+  root.children.push(imageLikeSolid, text)
+
+  const result = await exportSelection(
+    [root as unknown as FrameNode],
+    { frameRate: 30, webpEnabled: false, webpQuality: 80 },
+    async (bytes) => bytes,
+  )
+  assert.equal(result.warnings.length, 1)
+  assert.equal(result.warnings[0].nodeName, 'Figma Motion to PAG')
+  assert.match(result.warnings[0].message, /已忽略/)
+  assert.ok(new TextDecoder().decode(result.bytes).includes('Background'))
+})

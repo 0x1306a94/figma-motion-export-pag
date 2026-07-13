@@ -1,6 +1,7 @@
 import { encodePagFile } from './pag/encode-file'
 import type { PagImage, PagLayer, PagSolidLayer } from './pag/types'
-import { readImageNode } from './image'
+import { readLayerEffects } from './effect'
+import { applyImageFit, readImageNode } from './image'
 import { composeAncestorMotionTransform, readMotionTransform } from './motion'
 import { readShapeNode } from './shape'
 import {
@@ -87,9 +88,19 @@ export async function exportSelection(
 
   const visit = async (node: SceneNode, ancestors: SceneNode[], mask?: ActiveMask): Promise<void> => {
     if (!node.visible) return
+    if (node.type === 'TEXT') {
+      warnings.push({
+        nodeId: node.id,
+        nodeName: node.name,
+        message: '当前版本暂不支持文本图层，已忽略。',
+      })
+      return
+    }
     validateLayerNode(node)
+    const effects = readLayerEffects(node, options.frameRate, warnings)
     const solid = readSolidNode(node, nextId, duration, transformContext)
     if (solid !== null) {
+      solid.effects = effects
       solid.transform = readMotionTransform(
         node,
         root,
@@ -104,15 +115,16 @@ export async function exportSelection(
       return
     }
     const nodeTransform = readNodeTransform(node, transformContext)
-    const image = await readImageNode(node, nextId, duration, nodeTransform, {
+    const imageResult = await readImageNode(node, nextId, duration, nodeTransform, {
       options,
       imagesByHash,
       nextImageId: () => nextImageId++,
       encodeWebP,
     })
-    if (image !== null) {
-      validateImageMotion(node, image, nodeTransform)
-      image.transform = readMotionTransform(
+    if (imageResult !== null) {
+      const image = imageResult.layer
+      image.effects = effects
+      const motionTransform = readMotionTransform(
         node,
         root,
         options.frameRate,
@@ -121,12 +133,14 @@ export async function exportSelection(
         transformContext,
         readPaintOpacity(node),
       )
+      image.transform = applyImageFit(motionTransform, imageResult.fit)
       nextId += 1
       await appendLayer(node, ancestors, image, mask)
       return
     }
     const shape = readShapeNode(node, nextId, duration, nodeTransform)
     if (shape !== null) {
+      shape.effects = effects
       shape.transform = readMotionTransform(
         node,
         root,
@@ -140,6 +154,15 @@ export async function exportSelection(
       return
     }
     if ('children' in node) {
+      if (effects.length > 0) {
+        throw new ExportError([
+          {
+            nodeId: node.id,
+            nodeName: node.name,
+            message: '当前版本不支持容器图层的 Layer Blur。',
+          },
+        ])
+      }
       let activeMask = mask
       const childAncestors = [...ancestors, node]
       for (const child of node.children) {
@@ -164,6 +187,13 @@ export async function exportSelection(
   }
 
   if ('children' in root) {
+    validateLayerNode(root)
+    const rootEffects = readLayerEffects(root, options.frameRate, warnings)
+    if (rootEffects.length > 0) {
+      throw new ExportError([
+        { nodeId: root.id, nodeName: root.name, message: '当前版本不支持容器图层的 Layer Blur。' },
+      ])
+    }
     let activeMask: ActiveMask | undefined
     for (const child of root.children) {
       if ('isMask' in child && child.isMask) {
@@ -204,51 +234,7 @@ export async function exportSelection(
   return { bytes, fileName: `${safeFileName(root.name)}.pag`, warnings }
 }
 
-function validateImageMotion(
-  node: SceneNode,
-  image: Extract<PagLayer, { type: 'image' }>,
-  nodeTransform: import('./pag/types').PagTransform,
-): void {
-  const fields = Object.keys(node.animations)
-  const transformFields = fields.filter((field) => field !== 'OPACITY')
-  if (transformFields.length === 0) return
-  const scaleFields = transformFields.filter((field) => field.startsWith('SCALE_'))
-  if (scaleFields.length > 0) {
-    throw new ExportError([
-      {
-        nodeId: node.id,
-        nodeName: node.name,
-        message: '当前版本不支持图片图层的 Scale Motion。',
-      },
-    ])
-  }
-  if (image.masks !== undefined || !sameStaticPoint(image.transform.position, nodeTransform.position)) {
-    throw new ExportError([
-      {
-        nodeId: node.id,
-        nodeName: node.name,
-        message: '带 FIT 偏移或 FILL 裁剪的图片当前仅支持 Opacity Motion。',
-      },
-    ])
-  }
-}
-
-function sameStaticPoint(
-  left: import('./pag/types').PagTransform['position'],
-  right: import('./pag/types').PagTransform['position'],
-): boolean {
-  if (left === undefined || right === undefined || 'keyframes' in left || 'keyframes' in right) {
-    return left === right
-  }
-  return Math.abs(left.x - right.x) < 0.0001 && Math.abs(left.y - right.y) < 0.0001
-}
-
 function validateLayerNode(node: SceneNode): void {
-  if ('effects' in node && node.effects.some((effect) => effect.visible !== false)) {
-    throw new ExportError([
-      { nodeId: node.id, nodeName: node.name, message: '当前版本不支持可见 Effect。' },
-    ])
-  }
   if ('blendMode' in node && node.blendMode !== 'NORMAL' && node.blendMode !== 'PASS_THROUGH') {
     throw new ExportError([
       { nodeId: node.id, nodeName: node.name, message: `当前版本不支持 ${node.blendMode} 混合模式。` },

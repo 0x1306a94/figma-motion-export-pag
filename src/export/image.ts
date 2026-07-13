@@ -9,39 +9,67 @@ export interface ImageReadContext {
   encodeWebP: (source: Uint8Array, mimeType: string, quality: number) => Promise<Uint8Array>
 }
 
+export interface ImageFit {
+  scale: number
+  offset: PagPoint
+}
+
+export interface ImageReadResult {
+  layer: PagImageLayer
+  fit: ImageFit
+}
+
 export async function readImageNode(
   node: SceneNode,
   id: number,
   duration: number,
   transform: PagTransform,
   context: ImageReadContext,
-): Promise<PagImageLayer | null> {
+): Promise<ImageReadResult | null> {
   if (node.type !== 'RECTANGLE' || node.fills === figma.mixed) return null
   const fills = (node.fills as readonly Paint[]).filter((paint) => paint.visible !== false)
   if (fills.length !== 1 || fills[0].type !== 'IMAGE') return null
   const paint = fills[0]
   validateImageNode(node, paint)
   const image = await getImage(paint, node, context)
-  const fitted = fitImage(node, image, paint.scaleMode, transform)
+  const fitted = fitImage(node, image, paint.scaleMode)
   return {
-    type: 'image',
-    id,
-    imageId: image.id,
-    name: node.name,
-    startTime: 0,
-    duration,
-    transform: {
-      ...fitted.transform,
-      opacity: Math.round(node.opacity * (paint.opacity ?? 1) * 255),
+    layer: {
+      type: 'image',
+      id,
+      imageId: image.id,
+      name: node.name,
+      startTime: 0,
+      duration,
+      transform: {
+        ...transform,
+        opacity: Math.round(node.opacity * (paint.opacity ?? 1) * 255),
+      },
+      masks: fitted.mask === undefined ? undefined : [{ id: 1, commands: fitted.mask }],
     },
-    masks: fitted.mask === undefined ? undefined : [{ id: 1, commands: fitted.mask }],
+    fit: { scale: fitted.scale, offset: fitted.offset },
   }
+}
+
+export function applyImageFit(transform: PagTransform, fit: ImageFit): PagTransform {
+  const scale = mapPointProperty(transform.scale ?? { x: 1, y: 1 }, (value) => ({
+    x: value.x * fit.scale,
+    y: value.y * fit.scale,
+  }))
+  const anchorPoint = mapPointProperty(transform.anchorPoint ?? { x: 0, y: 0 }, (value) => ({
+    x: (value.x - fit.offset.x) / fit.scale,
+    y: (value.y - fit.offset.y) / fit.scale,
+  }))
+  return { ...transform, anchorPoint, scale }
 }
 
 function validateImageNode(
   node: RectangleNode,
   paint: ImagePaint,
 ): asserts paint is ImagePaint & { imageHash: string; scaleMode: 'FIT' | 'FILL' } {
+  if (node.animations.WIDTH !== undefined || node.animations.HEIGHT !== undefined) {
+    fail(node, '图片图层暂不支持 WIDTH/HEIGHT Motion，请使用 Scale Motion。')
+  }
   if (paint.imageHash === null) fail(node, '图片填充缺少 imageHash。')
   if (paint.scaleMode !== 'FIT' && paint.scaleMode !== 'FILL') {
     fail(node, '当前版本仅支持 FIT 和 FILL 图片填充。')
@@ -100,38 +128,23 @@ function fitImage(
   node: RectangleNode,
   image: PagImage,
   scaleMode: 'FIT' | 'FILL',
-  transform: PagTransform,
-): { transform: PagTransform; mask?: import('./pag/types').PagPathCommand[] } {
+): ImageFit & { mask?: import('./pag/types').PagPathCommand[] } {
   const widthScale = node.width / image.width
   const heightScale = node.height / image.height
   const imageScale =
     scaleMode === 'FIT' ? Math.min(widthScale, heightScale) : Math.max(widthScale, heightScale)
   const offsetX = (node.width - image.width * imageScale) / 2
   const offsetY = (node.height - image.height * imageScale) / 2
-  const scale = readStaticPoint(transform.scale, { x: 1, y: 1 })
-  const scaleX = scale.x
-  const scaleY = scale.y
-  const rotation = (readStaticNumber(transform.rotation, 0) * Math.PI) / 180
-  const position = readStaticPoint(transform.position, { x: 0, y: 0 })
-  const localX = offsetX * scaleX
-  const localY = offsetY * scaleY
-  const fittedTransform: PagTransform = {
-      ...transform,
-      position: {
-        x: position.x + localX * Math.cos(rotation) - localY * Math.sin(rotation),
-        y: position.y + localX * Math.sin(rotation) + localY * Math.cos(rotation),
-      },
-      scale: { x: scaleX * imageScale, y: scaleY * imageScale },
-    }
   if (scaleMode !== 'FILL' || Math.abs(widthScale - heightScale) <= 0.0001) {
-    return { transform: fittedTransform }
+    return { scale: imageScale, offset: { x: offsetX, y: offsetY } }
   }
   const left = -offsetX / imageScale
   const top = -offsetY / imageScale
   const right = (node.width - offsetX) / imageScale
   const bottom = (node.height - offsetY) / imageScale
   return {
-    transform: fittedTransform,
+    scale: imageScale,
+    offset: { x: offsetX, y: offsetY },
     mask: [
       { type: 'move', values: [left, top] },
       { type: 'line', values: [right, top] },
@@ -142,12 +155,18 @@ function fitImage(
   }
 }
 
-function readStaticPoint(property: PagProperty<PagPoint> | undefined, fallback: PagPoint): PagPoint {
-  return property === undefined || isAnimated(property) ? fallback : property
-}
-
-function readStaticNumber(property: PagProperty<number> | undefined, fallback: number): number {
-  return property === undefined || isAnimated(property) ? fallback : property
+function mapPointProperty(
+  property: PagProperty<PagPoint>,
+  mapValue: (value: PagPoint) => PagPoint,
+): PagProperty<PagPoint> {
+  if (!isAnimated(property)) return mapValue(property)
+  return {
+    keyframes: property.keyframes.map((keyframe) => ({
+      ...keyframe,
+      startValue: mapValue(keyframe.startValue),
+      endValue: mapValue(keyframe.endValue),
+    })),
+  }
 }
 
 function isAnimated<T>(property: PagProperty<T>): property is PagAnimatedProperty<T> {

@@ -83,6 +83,19 @@ int main(int argumentCount, char** arguments) {
     std::cerr << "motion transform mismatch\n";
     return 1;
   }
+  if (animatedLayer->effects.size() != 1 ||
+      animatedLayer->effects[0]->type() != pag::EffectType::FastBlur) {
+    std::cerr << "layer blur mismatch\n";
+    return 1;
+  }
+  auto blur = static_cast<pag::FastBlurEffect*>(animatedLayer->effects[0]);
+  if (blur->blurriness == nullptr || !blur->blurriness->animatable() ||
+      std::abs(blur->blurriness->getValueAt(0) - 21.2f) > 0.001f ||
+      std::abs(blur->blurriness->getValueAt(18) - 60.0f) > 0.001f ||
+      blur->repeatEdgePixels == nullptr || !blur->repeatEdgePixels->getValueAt(0)) {
+    std::cerr << "layer blur property mismatch\n";
+    return 1;
+  }
 
   std::cout << "native PAG validation passed\n";
   return 0;

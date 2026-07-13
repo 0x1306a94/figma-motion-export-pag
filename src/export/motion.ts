@@ -78,9 +78,9 @@ export function readMotionTransform(
   context: ExportTransformContext,
   opacityMultiplier = 1,
 ): PagTransform {
-  const animationFields = Object.keys(node.animations).filter(
-    (field) => node.animations[field as KeyframePropertyFieldName] !== undefined,
-  )
+  const animationFields = Object.keys(node.animations)
+    .filter((field) => field !== 'effects')
+    .filter((field) => node.animations[field as KeyframePropertyFieldName] !== undefined)
   const unsupported = animationFields.filter((field) => !supportedFields.has(field))
   if (unsupported.length > 0) fail(node, `当前版本不支持 Motion 属性：${unsupported.join('、')}。`)
   if (animationFields.length === 0) return transform
@@ -659,6 +659,17 @@ function readNumberBinding(
 ): PagProperty<number> | undefined {
   const binding = node.animations[field]
   if (binding === undefined) return undefined
+  return readNumberKeyframeBinding(node, binding, field, frameRate, warnings, mapValue)
+}
+
+export function readNumberKeyframeBinding(
+  node: SceneNode,
+  binding: KeyframeBinding,
+  field: string,
+  frameRate: number,
+  warnings: ExportIssue[],
+  mapValue: (value: number) => number = (value) => value,
+): PagProperty<number> {
   const property = readBinding(node, binding, frameRate, warnings, (value) => {
     if (value.type !== 'FLOAT') fail(node, `${field} 必须使用 FLOAT 关键帧值。`)
     if (!Number.isFinite(value.value)) fail(node, `${field} 包含无效数值。`)

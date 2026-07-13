@@ -80,6 +80,26 @@ export const solidFixture: PagComposition = {
           ],
         },
       },
+      effects: [
+        {
+          type: 'fast-blur',
+          blurriness: {
+            keyframes: [
+              {
+                startTime: 0,
+                endTime: 18,
+                startValue: 21.2,
+                endValue: 60,
+                interpolation: 2,
+                bezier: [{ out: { x: 0.5, y: 0 }, in: { x: 0.5, y: 1 } }],
+              },
+            ],
+          },
+          blurDimensions: 0,
+          repeatEdgePixels: true,
+          effectOpacity: 255,
+        },
+      ],
       geometry: {
         type: 'rectangle',
         size: { x: 80, y: 40 },
