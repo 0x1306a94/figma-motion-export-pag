@@ -48,6 +48,7 @@ interface ValueMath<T> {
 
 interface PreparedTrack<T> {
   operation: ManualKeyframeTrack['keyframeOperation']
+  startFrame: number
   points: Array<{ frame: number; value: T; easing: MotionEasing | VariableAlias }>
 }
 
@@ -756,11 +757,20 @@ function readBinding<T>(
     return sampleTracks(node, binding, tracks, baseValue, frameRate, math)
   }
 
+  const track = tracks[0]
+  if (track.points.length === 0) return baseValue
   const points = new Map<number, { value: T; easing?: MotionEasing | VariableAlias }>()
-  points.set(0, { value: baseValue, easing: { type: 'HOLD' } })
-  for (const point of tracks[0].points) {
+  if (track.startFrame > 0) {
+    points.set(0, { value: baseValue, easing: { type: 'HOLD' } })
+  }
+  const firstPoint = track.points[0]
+  points.set(track.startFrame, {
+    value: applyOperation(baseValue, firstPoint.value, track.operation, math),
+    easing: firstPoint.easing,
+  })
+  for (const point of track.points) {
     points.set(point.frame, {
-      value: applyOperation(baseValue, point.value, tracks[0].operation, math),
+      value: applyOperation(baseValue, point.value, track.operation, math),
       easing: point.easing,
     })
   }
@@ -813,6 +823,7 @@ function prepareTrack<T>(
   }
   return {
     operation: track.keyframeOperation,
+    startFrame: Math.round(timelineOffset * frameRate),
     points: [...points.values()].sort((left, right) => left.frame - right.frame),
   }
 }
@@ -868,7 +879,8 @@ function evaluateTrack<T>(
   frame: number,
   math: ValueMath<T>,
 ): T | undefined {
-  if (track.points.length === 0 || frame < track.points[0].frame) return undefined
+  if (track.points.length === 0 || frame < track.startFrame) return undefined
+  if (frame < track.points[0].frame) return track.points[0].value
   const lastPoint = track.points[track.points.length - 1]
   if (frame >= lastPoint.frame) return lastPoint.value
   for (let index = 0; index < track.points.length - 1; index += 1) {

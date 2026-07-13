@@ -83,6 +83,61 @@ test('Motion 秒数转帧、碰撞保留后值并生成 N-1 段', () => {
   assert.equal(transform.yPosition, 5)
 })
 
+test('首个 Motion 关键帧延迟时向前保持首值', () => {
+  const root = {}
+  const node = {
+    id: '38:156',
+    name: '触桌',
+    parent: root,
+    width: 155,
+    height: 116,
+    animations: {
+      SCALE_XY: {
+        baseValue: { type: 'VECTOR', value: { x: 1, y: 1 } },
+        timelineDuration: 3.3,
+        tracks: [{
+          id: 'scale',
+          keyframeOperation: 'SET',
+          keyframes: [
+            {
+              id: 'hidden',
+              timelinePosition: 0.94,
+              easing: { type: 'LINEAR' },
+              value: { type: 'VECTOR', value: { x: 0, y: 0 } },
+            },
+            {
+              id: 'visible',
+              timelinePosition: 1.51,
+              easing: { type: 'LINEAR' },
+              value: { type: 'VECTOR', value: { x: 1, y: 1 } },
+            },
+          ],
+        }],
+      },
+    },
+    relativeTransform: [[1, 0, 10], [0, 1, 20]],
+  }
+  const transform = readMotionTransform(
+    node as unknown as SceneNode,
+    root as FrameNode,
+    10,
+    { position: { x: 10, y: 20 }, scale: { x: 1, y: 1 } },
+    [],
+    identityContext,
+  )
+  const scale = transform.scale as {
+    keyframes: Array<{ startTime: number; endTime: number; startValue: PagPoint; endValue: PagPoint }>
+  }
+  assert.deepEqual(scale.keyframes[0], {
+    startTime: 0,
+    endTime: 9,
+    startValue: { x: 0, y: 0 },
+    endValue: { x: 0, y: 0 },
+    interpolation: 1,
+    bezier: undefined,
+  })
+})
+
 test('OFFSET track 会叠加 baseValue 并应用 timelineOffset', () => {
   const root = {}
   const node = {
@@ -491,6 +546,12 @@ test('根 Frame 水平翻转会映射 Motion 位移、旋转和缩放', () => {
             keyframeOperation: 'SET',
             keyframes: [
               {
+                id: 'position-start',
+                timelinePosition: 0,
+                easing: { type: 'LINEAR' },
+                value: { type: 'VECTOR', value: { x: 0, y: 0 } },
+              },
+              {
                 id: 'position-end',
                 timelinePosition: 1,
                 easing: { type: 'LINEAR' },
@@ -509,6 +570,12 @@ test('根 Frame 水平翻转会映射 Motion 位移、旋转和缩放', () => {
             keyframeOperation: 'SET',
             keyframes: [
               {
+                id: 'rotation-start',
+                timelinePosition: 0,
+                easing: { type: 'LINEAR' },
+                value: { type: 'FLOAT', value: 0 },
+              },
+              {
                 id: 'rotation-end',
                 timelinePosition: 1,
                 easing: { type: 'LINEAR' },
@@ -526,6 +593,12 @@ test('根 Frame 水平翻转会映射 Motion 位移、旋转和缩放', () => {
             id: 'scale',
             keyframeOperation: 'SET',
             keyframes: [
+              {
+                id: 'scale-start',
+                timelinePosition: 0,
+                easing: { type: 'LINEAR' },
+                value: { type: 'VECTOR', value: { x: 1, y: 1 } },
+              },
               {
                 id: 'scale-end',
                 timelinePosition: 1,
