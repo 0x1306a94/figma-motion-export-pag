@@ -1,0 +1,8 @@
+{
+    "include": [
+        "libpag/include",
+        "libpag/src",
+        "libpag/third_party/tgfx/include",
+        "libpag/third_party/tgfx/src"
+    ]
+}

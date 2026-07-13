@@ -1,0 +1,21 @@
+# Node
+*.log
+*.log.*
+node_modules
+
+.superpowers/
+
+out/
+dist/
+code.js
+test/*.js
+test/fixtures/*.png
+test/fixtures/*.layout.xml
+test/fixtures/frame10-sample.bin
+test/fixtures/frame10-image.pag
+test/fixtures/*.pag
+/libpag
+/build_libpag
+/test_dev_export_samples
+*.png
+*.layout.xml
