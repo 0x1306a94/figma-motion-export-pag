@@ -184,7 +184,7 @@ test('OFFSET track 会叠加 baseValue 并应用 timelineOffset', () => {
       keyframe.interpolation,
     ]),
     [
-      [0, 5, 100, 80, 3],
+      [0, 5, 80, 80, 3],
       [5, 10, 80, 100, 1],
     ],
   )
@@ -204,17 +204,19 @@ test('多 track 按顺序逐帧合成 OFFSET 与 SCALE', () => {
           {
             id: 'offset',
             keyframeOperation: 'OFFSET',
+            animationPreset: { timelineOffset: 0.5 },
             keyframes: [
-              { id: 'offset-start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 0 } },
-              { id: 'offset-end', timelinePosition: 1, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 10 } },
+              { id: 'offset-start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: -5 } },
+              { id: 'offset-end', timelinePosition: 0.5, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 10 } },
             ],
           },
           {
             id: 'scale',
             keyframeOperation: 'SCALE',
+            animationPreset: { timelineOffset: 0.5 },
             keyframes: [
-              { id: 'scale-start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 1 } },
-              { id: 'scale-end', timelinePosition: 1, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 2 } },
+              { id: 'scale-start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 0 } },
+              { id: 'scale-end', timelinePosition: 0.5, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 2 } },
             ],
           },
         ],
@@ -237,8 +239,8 @@ test('多 track 按顺序逐帧合成 OFFSET 与 SCALE', () => {
   assert.deepEqual(
     xPosition.keyframes.map((keyframe) => [keyframe.startValue, keyframe.endValue]),
     [
-      [10, 22.5],
-      [22.5, 40],
+      [0, 0],
+      [0, 40],
     ],
   )
 })
@@ -258,8 +260,8 @@ test('SCALE track 在 PAG 透明度映射前计算', () => {
           keyframeOperation: 'SCALE',
           animationPreset: { timelineOffset: 0.5 },
           keyframes: [
-            { id: 'opacity-start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 1 } },
-            { id: 'opacity-end', timelinePosition: 0.5, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 0 } },
+            { id: 'opacity-start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 0 } },
+            { id: 'opacity-end', timelinePosition: 0.5, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 1 } },
           ],
         }],
       },
@@ -283,8 +285,8 @@ test('SCALE track 在 PAG 透明度映射前计算', () => {
       keyframe.interpolation,
     ]),
     [
-      [127.5, 127.5, 3],
-      [127.5, 0, 1],
+      [0, 0, 3],
+      [0, 127.5, 1],
     ],
   )
 })

@@ -769,12 +769,13 @@ function readBinding<T>(
   const track = tracks[0]
   if (track.points.length === 0) return baseValue
   const points = new Map<number, { value: T; easing?: MotionEasing | VariableAlias }>()
-  if (track.startFrame > 0) {
-    points.set(0, { value: baseValue, easing: { type: 'HOLD' } })
-  }
   const firstPoint = track.points[0]
+  const firstValue = applyOperation(baseValue, firstPoint.value, track.operation, math)
+  if (track.startFrame > 0) {
+    points.set(0, { value: firstValue, easing: { type: 'HOLD' } })
+  }
   points.set(track.startFrame, {
-    value: applyOperation(baseValue, firstPoint.value, track.operation, math),
+    value: firstValue,
     easing: firstPoint.easing,
   })
   for (const point of track.points) {
@@ -888,7 +889,8 @@ function evaluateTrack<T>(
   frame: number,
   math: ValueMath<T>,
 ): T | undefined {
-  if (track.points.length === 0 || frame < track.startFrame) return undefined
+  if (track.points.length === 0) return undefined
+  if (frame < track.startFrame) return track.points[0].value
   if (frame < track.points[0].frame) return track.points[0].value
   const lastPoint = track.points[track.points.length - 1]
   if (frame >= lastPoint.frame) return lastPoint.value
