@@ -95,12 +95,9 @@ export function readMotionTransform(
     fail(node, 'TRANSLATION_XY 不能与 TRANSLATION_X/Y 同时使用。')
   }
   if (positionXY !== undefined) {
-    const staticPosition = {
-      x: node.relativeTransform[0][2],
-      y: node.relativeTransform[1][2],
-    }
+    const staticPosition = getStaticPoint(transform.position, { x: 0, y: 0 })
     result.position = mapPointProperty(positionXY, (point) =>
-      mapPosition({ x: staticPosition.x + point.x, y: staticPosition.y + point.y }, nodeContext),
+      mapTranslation(point, staticPosition, nodeContext),
     )
     result.xPosition = undefined
     result.yPosition = undefined
@@ -506,6 +503,18 @@ function mapPosition(point: PagPoint, context: NodeMotionContext): PagPoint {
   return {
     x: transform[0][0] * point.x + transform[0][1] * point.y + transform[0][2],
     y: transform[1][0] * point.x + transform[1][1] * point.y + transform[1][2],
+  }
+}
+
+function mapTranslation(
+  point: PagPoint,
+  staticPosition: PagPoint,
+  context: NodeMotionContext,
+): PagPoint {
+  const transform = context.parentToExportTransform
+  return {
+    x: staticPosition.x + transform[0][0] * point.x + transform[0][1] * point.y,
+    y: staticPosition.y + transform[1][0] * point.x + transform[1][1] * point.y,
   }
 }
 

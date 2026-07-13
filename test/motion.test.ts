@@ -686,6 +686,54 @@ test('嵌套节点 Motion 使用直接父节点坐标映射到导出画布', () 
   assert.equal(transform.yPosition, 70)
 })
 
+test('Group 子节点的 TRANSLATION_XY 不重复叠加父级平移', () => {
+  const root = {}
+  const parent = {
+    absoluteTransform: [
+      [1, 0, 100],
+      [0, 1, 50],
+    ],
+  }
+  const node = {
+    id: '1:13',
+    name: '下球线蒙版',
+    parent,
+    width: 100,
+    height: 50,
+    animations: {
+      TRANSLATION_XY: {
+        baseValue: { type: 'VECTOR', value: { x: 0, y: 0 } },
+        timelineDuration: 1,
+        tracks: [{
+          id: 'position',
+          keyframeOperation: 'SET',
+          keyframes: [
+            { id: 'start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'VECTOR', value: { x: 0, y: 0 } } },
+            { id: 'end', timelinePosition: 1, easing: { type: 'LINEAR' }, value: { type: 'VECTOR', value: { x: 20, y: 10 } } },
+          ],
+        }],
+      },
+    },
+    relativeTransform: [
+      [1, 0, 110],
+      [0, 1, 70],
+    ],
+  }
+  const transform = readMotionTransform(
+    node as unknown as SceneNode,
+    root as unknown as SceneNode,
+    10,
+    { position: { x: 110, y: 70 } },
+    [],
+    identityContext,
+  )
+  const position = transform.position as {
+    keyframes: Array<{ startValue: PagPoint; endValue: PagPoint }>
+  }
+  assert.deepEqual(position.keyframes[0].startValue, { x: 110, y: 70 })
+  assert.deepEqual(position.keyframes[0].endValue, { x: 130, y: 80 })
+})
+
 test('容器 Motion 会逐帧合成到后代图层', () => {
   const root = { absoluteTransform: identityContext.rootToExportTransform }
   const parent = {
