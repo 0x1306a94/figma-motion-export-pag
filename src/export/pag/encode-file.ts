@@ -32,6 +32,7 @@ const enum TagCode {
   FastBlurEffect = 60,
   FontTables = 1,
   TextSource = 8,
+  CompositionReference = 12,
 }
 
 const enum LayerType {
@@ -39,6 +40,7 @@ const enum LayerType {
   Shape = 4,
   Image = 5,
   Text = 3,
+  PreCompose = 6,
 }
 
 export function encodePagFile(composition: PagComposition): Uint8Array {
@@ -58,12 +60,7 @@ export function encodePagFile(composition: PagComposition): Uint8Array {
       }
     })
   }
-  writeTag(body, TagCode.VectorCompositionBlock, (stream) => {
-    stream.writeEncodedUint(composition.id)
-    writeCompositionAttributes(stream, composition)
-    for (const layer of composition.layers) writeLayer(stream, layer, fontIds)
-    writeEndTag(stream)
-  })
+  writeComposition(body, composition, fontIds)
   writeEndTag(body)
 
   const file = new EncodeStream()
@@ -73,6 +70,20 @@ export function encodePagFile(composition: PagComposition): Uint8Array {
   file.writeUint8('U'.charCodeAt(0))
   file.writeBytes(body.toUint8Array())
   return file.toUint8Array()
+}
+
+function writeComposition(
+  stream: EncodeStream,
+  composition: PagComposition,
+  fontIds: Map<string, number>,
+): void {
+  for (const nested of composition.compositions ?? []) writeComposition(stream, nested, fontIds)
+  writeTag(stream, TagCode.VectorCompositionBlock, (content) => {
+    content.writeEncodedUint(composition.id)
+    writeCompositionAttributes(content, composition)
+    for (const layer of composition.layers) writeLayer(content, layer, fontIds)
+    writeEndTag(content)
+  })
 }
 
 function writeCompositionAttributes(stream: EncodeStream, composition: PagComposition): void {
@@ -94,6 +105,8 @@ function writeLayer(stream: EncodeStream, layer: PagLayer, fontIds: Map<string, 
           ? LayerType.Shape
           : layer.type === 'text'
             ? LayerType.Text
+            : layer.type === 'precompose'
+              ? LayerType.PreCompose
             : LayerType.Image,
     )
     content.writeEncodedUint(layer.id)
@@ -104,6 +117,12 @@ function writeLayer(stream: EncodeStream, layer: PagLayer, fontIds: Map<string, 
     if (layer.type === 'solid') writeSolidColor(content, layer)
     else if (layer.type === 'shape') writeShape(content, layer)
     else if (layer.type === 'text') writeTextSource(content, layer.sourceText, fontIds)
+    else if (layer.type === 'precompose') {
+      writeTag(content, TagCode.CompositionReference, (reference) => {
+        reference.writeEncodedUint(layer.compositionId)
+        reference.writeEncodedUint(layer.compositionStartTime)
+      })
+    }
     else writeTag(content, TagCode.ImageReference, (reference) => reference.writeEncodedUint(layer.imageId))
     writeEndTag(content)
   })
@@ -112,12 +131,20 @@ function writeLayer(stream: EncodeStream, layer: PagLayer, fontIds: Map<string, 
 function writeFontTables(stream: EncodeStream, composition: PagComposition): Map<string, number> {
   const fonts: Array<{ family: string; style: string }> = []
   const fontIds = new Map<string, number>()
-  for (const layer of composition.layers) {
-    if (layer.type !== 'text') continue
+  const compositions: PagComposition[] = []
+  const collectCompositions = (item: PagComposition): void => {
+    for (const nested of item.compositions ?? []) collectCompositions(nested)
+    compositions.push(item)
+  }
+  collectCompositions(composition)
+  for (const item of compositions) {
+    for (const layer of item.layers) {
+      if (layer.type !== 'text') continue
     const key = `${layer.sourceText.fontFamily} - ${layer.sourceText.fontStyle}`
     if (fontIds.has(key)) continue
     fontIds.set(key, fonts.length)
-    fonts.push({ family: layer.sourceText.fontFamily, style: layer.sourceText.fontStyle })
+      fonts.push({ family: layer.sourceText.fontFamily, style: layer.sourceText.fontStyle })
+    }
   }
   if (fonts.length > 0) {
     writeTag(stream, TagCode.FontTables, (content) => {
@@ -244,7 +271,9 @@ function writeLayerAttributes(stream: EncodeStream, layer: PagLayer): void {
     writeOptionalValue(flags, values, layer.startTime !== 0, () => {
       values.writeEncodedUint(layer.startTime)
     })
-    writeOptionalValue(flags, values, false, () => undefined)
+    writeOptionalValue(flags, values, (layer.blendMode ?? 0) !== 0, () => {
+      values.writeUint8(layer.blendMode ?? 0)
+    })
     writeOptionalValue(flags, values, layer.trackMatteType !== undefined, () => {
       values.writeUint8(readTrackMatteType(layer.trackMatteType!))
     })
@@ -361,7 +390,7 @@ function writeFill(stream: EncodeStream, layer: PagShapeLayer): void {
   writeTag(stream, TagCode.Fill, (content) => {
     const flags = new EncodeStream()
     const values = new EncodeStream()
-    writeValue(flags, false, () => undefined)
+    writeValue(flags, (fill.blendMode ?? 0) !== 0, () => values.writeUint8(fill.blendMode ?? 0))
     writeValue(flags, false, () => undefined)
     writeValue(flags, layer.fillRule !== 0, () => values.writeUint8(layer.fillRule))
     writeStaticColorProperty(flags, values, fill.color, { red: 255, green: 0, blue: 0 })
@@ -376,7 +405,7 @@ function writeStroke(stream: EncodeStream, layer: PagShapeLayer): void {
   writeTag(stream, TagCode.Stroke, (content) => {
     const flags = new EncodeStream()
     const values = new EncodeStream()
-    writeValue(flags, false, () => undefined)
+    writeValue(flags, (stroke.blendMode ?? 0) !== 0, () => values.writeUint8(stroke.blendMode ?? 0))
     writeValue(flags, false, () => undefined)
     writeValue(flags, stroke.lineCap !== 0, () => values.writeUint8(stroke.lineCap))
     writeValue(flags, stroke.lineJoin !== 0, () => values.writeUint8(stroke.lineJoin))

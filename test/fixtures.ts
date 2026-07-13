@@ -23,7 +23,41 @@ export const solidFixture: PagComposition = {
       ]),
     },
   ],
+  compositions: [
+    {
+      id: 2,
+      width: 100,
+      height: 100,
+      duration: 30,
+      frameRate: 30,
+      backgroundColor: { red: 255, green: 255, blue: 255 },
+      layers: [
+        {
+          type: 'solid',
+          id: 8,
+          name: 'Overlay',
+          startTime: 0,
+          duration: 30,
+          width: 100,
+          height: 100,
+          color: { red: 24, green: 41, blue: 228 },
+          blendMode: 16,
+          transform: { opacity: 51 },
+        },
+      ],
+    },
+  ],
   layers: [
+    {
+      type: 'precompose',
+      id: 7,
+      name: 'Multi Fill',
+      startTime: 0,
+      duration: 30,
+      compositionId: 2,
+      compositionStartTime: 0,
+      transform: {},
+    },
     {
       type: 'text',
       id: 6,
@@ -63,6 +97,7 @@ export const solidFixture: PagComposition = {
       width: 320,
       height: 180,
       color: { red: 255, green: 128, blue: 0 },
+      blendMode: 1,
       transform: { position: { x: 12, y: 8 }, opacity: 204 },
     },
     {

@@ -1,7 +1,7 @@
 import { encodePagFile } from './pag/encode-file'
-import type { PagImage, PagLayer, PagSolidLayer } from './pag/types'
+import type { PagComposition, PagImage, PagLayer, PagSolidLayer } from './pag/types'
 import { readLayerEffects } from './effect'
-import { applyImageFit, readImageNode } from './image'
+import { applyImageFit, readImageNode, readImagePaintLayer } from './image'
 import { composeAncestorMotionTransform, readMotionTransform } from './motion'
 import { readShapeNode } from './shape'
 import {
@@ -16,6 +16,7 @@ import type { ExportOptions } from './types'
 import { readMaskMatte } from './mask'
 import type { FigmaMaskNode } from './mask'
 import { readTextNode } from './text'
+import { readBlendMode } from './blend-mode'
 
 export interface ExportResult {
   bytes: Uint8Array
@@ -38,12 +39,82 @@ export async function exportSelection(
   const layers: PagLayer[] = []
   const warnings: ExportResult['warnings'] = []
   const imagesByHash = new Map<string, Promise<PagImage>>()
+  const compositions: PagComposition[] = []
   let nextId = 2
   let nextImageId = 1
+  let nextCompositionId = 2
 
   interface ActiveMask {
     node: FigmaMaskNode
     ancestors: SceneNode[]
+  }
+
+  const readMultiFillLayer = async (node: SceneNode): Promise<PagLayer | null> => {
+    if (node.type !== 'RECTANGLE' || node.fills === figma.mixed) return null
+    const visibleFills = node.fills.filter((paint) => paint.visible !== false)
+    if (visibleFills.length <= 1) return null
+    if (!visibleFills.every((paint) => paint.type === 'SOLID' || paint.type === 'IMAGE')) return null
+    const fills = visibleFills as Array<SolidPaint | ImagePaint>
+
+    const childLayers: PagLayer[] = []
+    for (const paint of fills) {
+      if (paint.type === 'IMAGE') {
+        const imageResult = await readImagePaintLayer(
+          node,
+          paint,
+          nextId++,
+          duration,
+          { position: { x: 0, y: 0 }, scale: { x: 1, y: 1 } },
+          {
+            options,
+            imagesByHash,
+            nextImageId: () => nextImageId++,
+            encodeWebP,
+          },
+          1,
+        )
+        imageResult.layer.transform = applyImageFit(imageResult.layer.transform, imageResult.fit)
+        childLayers.push(imageResult.layer)
+        continue
+      }
+      childLayers.push({
+        type: 'solid',
+        id: nextId++,
+        name: node.name,
+        startTime: 0,
+        duration,
+        width: Math.max(1, Math.round(node.width)),
+        height: Math.max(1, Math.round(node.height)),
+        color: toPagColor(paint.color),
+        blendMode: readBlendMode(paint.blendMode, node),
+        transform: { opacity: Math.round((paint.opacity ?? 1) * 255) },
+      })
+    }
+    childLayers.reverse()
+
+    const compositionId = nextCompositionId++
+    compositions.push({
+      id: compositionId,
+      width: Math.max(1, Math.round(node.width)),
+      height: Math.max(1, Math.round(node.height)),
+      duration,
+      frameRate: options.frameRate,
+      backgroundColor: { red: 255, green: 255, blue: 255 },
+      layers: childLayers,
+    })
+    return {
+      type: 'precompose',
+      id: nextId++,
+      name: node.name,
+      startTime: 0,
+      duration,
+      compositionId,
+      compositionStartTime: 0,
+      transform: {
+        ...readNodeTransform(node, transformContext),
+        opacity: Math.round(node.opacity * 255),
+      },
+    }
   }
 
   const appendLayer = async (
@@ -120,6 +191,20 @@ export async function exportSelection(
     }
     validateLayerNode(node)
     const effects = readLayerEffects(node, options.frameRate, warnings)
+    const multiFill = await readMultiFillLayer(node)
+    if (multiFill !== null) {
+      multiFill.effects = effects
+      multiFill.transform = readMotionTransform(
+        node,
+        root,
+        options.frameRate,
+        multiFill.transform,
+        warnings,
+        transformContext,
+      )
+      await appendLayer(node, ancestors, multiFill, mask)
+      return
+    }
     const solid = readSolidNode(node, nextId, duration, transformContext)
     if (solid !== null) {
       solid.effects = effects
@@ -251,6 +336,7 @@ export async function exportSelection(
     frameRate: options.frameRate,
     backgroundColor: background?.color ?? { red: 255, green: 255, blue: 255 },
     images: await Promise.all(imagesByHash.values()),
+    compositions,
     layers,
   })
   return { bytes, fileName: `${safeFileName(root.name)}.pag`, warnings }
@@ -292,9 +378,6 @@ export function readRootBackgroundLayer(
     ])
   }
   const fill = fills[0]
-  if ((fill.blendMode ?? 'NORMAL') !== 'NORMAL') {
-    throw new ExportError([{ nodeId: root.id, nodeName: root.name, message: '根 Frame 填充不能使用混合模式。' }])
-  }
   return {
     type: 'solid',
     id,
@@ -304,6 +387,7 @@ export function readRootBackgroundLayer(
     width,
     height,
     color: toPagColor(fill.color),
+    blendMode: readBlendMode(fill.blendMode, root),
     transform: { opacity: Math.round(root.opacity * (fill.opacity ?? 1) * 255) },
   }
 }

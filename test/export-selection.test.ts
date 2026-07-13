@@ -29,6 +29,7 @@ test('根 Frame 纯色填充导出为全画布 Solid Layer', () => {
     width: 880,
     height: 1325,
     color: { red: 255, green: 128, blue: 0 },
+    blendMode: 0,
     transform: { opacity: 102 },
   })
 })
@@ -313,4 +314,70 @@ test('普通 TEXT 子图层会导出为 PAG 文本图层', async () => {
   assert.ok(new TextDecoder().decode(result.bytes).includes('Figma Motion to PAG'))
   assert.ok(new TextDecoder().decode(result.bytes).includes('Inter'))
   assert.ok(new TextDecoder().decode(result.bytes).includes('Background'))
+})
+
+test('图片与纯色多 Fill 会拆分到 PreCompose', async () => {
+  Object.defineProperty(globalThis, 'figma', {
+    value: {
+      mixed,
+      getImageByHash: () => ({
+        getBytesAsync: async () => Uint8Array.from([0x89, 0x50, 0x4e, 0x47]),
+        getSizeAsync: async () => ({ width: 100, height: 100 }),
+      }),
+    },
+    configurable: true,
+  })
+  const root = {
+    id: '54:5',
+    name: 'Frame11',
+    type: 'FRAME',
+    parent: { type: 'PAGE' },
+    animations: {},
+    timelines: [{ duration: 1 }],
+    absoluteTransform: [[1, 0, 0], [0, 1, 0]],
+    absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 600 },
+    opacity: 1,
+    fills: [],
+    effects: [],
+    blendMode: 'PASS_THROUGH',
+    children: [] as SceneNode[],
+  }
+  root.children.push({
+    id: '54:6',
+    name: 'IMG_18581',
+    type: 'RECTANGLE',
+    parent: root,
+    visible: true,
+    animations: {},
+    effects: [],
+    blendMode: 'NORMAL',
+    opacity: 1,
+    width: 400,
+    height: 600,
+    cornerSmoothing: 0,
+    topLeftRadius: 0,
+    topRightRadius: 0,
+    bottomLeftRadius: 0,
+    bottomRightRadius: 0,
+    strokeWeight: 0,
+    strokes: [],
+    fills: [
+      { type: 'IMAGE', imageHash: 'image', scaleMode: 'FILL', blendMode: 'NORMAL' },
+      {
+        type: 'SOLID',
+        color: { r: 24 / 255, g: 41 / 255, b: 228 / 255 },
+        opacity: 0.2,
+        blendMode: 'LINEAR_DODGE',
+      },
+    ],
+    absoluteTransform: [[1, 0, 0], [0, 1, 0]],
+  } as unknown as SceneNode)
+
+  const result = await exportSelection(
+    [root as unknown as FrameNode],
+    { frameRate: 30, webpEnabled: false, webpQuality: 80 },
+    async (bytes) => bytes,
+  )
+  assert.equal(result.warnings.length, 0)
+  assert.ok(new TextDecoder().decode(result.bytes).includes('IMG_18581'))
 })

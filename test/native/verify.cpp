@@ -16,7 +16,7 @@ int main(int argumentCount, char** arguments) {
     std::cerr << "PAGFile::Load failed\n";
     return 1;
   }
-  if (file->width() != 320 || file->height() != 180 || file->numChildren() != 5) {
+  if (file->width() != 320 || file->height() != 180 || file->numChildren() != 6) {
     std::cerr << "composition metadata mismatch\n";
     return 1;
   }
@@ -29,6 +29,7 @@ int main(int argumentCount, char** arguments) {
   bool foundShape = false;
   bool foundImage = false;
   bool foundText = false;
+  bool foundPreCompose = false;
   bool foundTrackMatte = false;
   for (int index = 0; index < file->numChildren(); index++) {
     auto layer = file->getLayerAt(index);
@@ -44,12 +45,15 @@ int main(int argumentCount, char** arguments) {
     foundText = foundText ||
                 (layer != nullptr && layer->layerType() == pag::LayerType::Text &&
                  layer->layerName() == "Title");
+    foundPreCompose = foundPreCompose ||
+                      (layer != nullptr && layer->layerType() == pag::LayerType::PreCompose &&
+                       layer->layerName() == "Multi Fill");
     if (layer != nullptr && layer->layerName() == "Badge") {
       auto matte = layer->trackMatteLayer();
       foundTrackMatte = matte != nullptr && matte->layerName() == "Badge Matte";
     }
   }
-  if (!foundSolid || !foundShape || !foundImage || !foundText || !foundTrackMatte ||
+  if (!foundSolid || !foundShape || !foundImage || !foundText || !foundPreCompose || !foundTrackMatte ||
       file->numImages() != 1) {
     std::cerr << "layer mismatch\n";
     return 1;
@@ -61,12 +65,18 @@ int main(int argumentCount, char** arguments) {
   pag::Layer* animatedLayer = nullptr;
   pag::Layer* maskedLayer = nullptr;
   pag::Layer* matteLayer = nullptr;
+  pag::Layer* solidLayer = nullptr;
   if (composition != nullptr) {
     for (auto layer : composition->layers) {
       if (layer->name == "Badge") animatedLayer = layer;
       if (layer->name == "Picture") maskedLayer = layer;
       if (layer->name == "Badge Matte") matteLayer = layer;
+      if (layer->name == "Background") solidLayer = layer;
     }
+  }
+  if (solidLayer == nullptr || solidLayer->blendMode != pag::BlendMode::Multiply) {
+    std::cerr << "blend mode mismatch\n";
+    return 1;
   }
   if (matteLayer == nullptr || matteLayer->isActive) {
     std::cerr << "track matte active state mismatch\n";

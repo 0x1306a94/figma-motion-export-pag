@@ -1,6 +1,7 @@
 import type { PagAnimatedProperty, PagImage, PagImageLayer, PagPoint, PagProperty, PagTransform } from './pag/types'
 import { ExportError } from './types'
 import type { ExportOptions } from './types'
+import { readBlendMode } from './blend-mode'
 
 export interface ImageReadContext {
   options: ExportOptions
@@ -29,7 +30,18 @@ export async function readImageNode(
   if (node.type !== 'RECTANGLE' || node.fills === figma.mixed) return null
   const fills = (node.fills as readonly Paint[]).filter((paint) => paint.visible !== false)
   if (fills.length !== 1 || fills[0].type !== 'IMAGE') return null
-  const paint = fills[0]
+  return readImagePaintLayer(node, fills[0], id, duration, transform, context)
+}
+
+export async function readImagePaintLayer(
+  node: RectangleNode,
+  paint: ImagePaint,
+  id: number,
+  duration: number,
+  transform: PagTransform,
+  context: ImageReadContext,
+  opacityMultiplier = node.opacity,
+): Promise<ImageReadResult> {
   validateImageNode(node, paint)
   const image = await getImage(paint, node, context)
   const fitted = fitImage(node, image, paint.scaleMode)
@@ -41,9 +53,10 @@ export async function readImageNode(
       name: node.name,
       startTime: 0,
       duration,
+      blendMode: readBlendMode(paint.blendMode, node),
       transform: {
         ...transform,
-        opacity: Math.round(node.opacity * (paint.opacity ?? 1) * 255),
+        opacity: Math.round(opacityMultiplier * (paint.opacity ?? 1) * 255),
       },
       masks: fitted.mask === undefined ? undefined : [{ id: 1, commands: fitted.mask }],
     },
@@ -75,7 +88,6 @@ function validateImageNode(
     fail(node, '当前版本仅支持 FIT 和 FILL 图片填充。')
   }
   if ((paint.rotation ?? 0) !== 0) fail(node, '当前版本不支持图片填充旋转。')
-  if ((paint.blendMode ?? 'NORMAL') !== 'NORMAL') fail(node, '当前版本不支持图片填充混合模式。')
   if (paint.filters !== undefined && Object.values(paint.filters).some((value) => value !== 0)) {
     fail(node, '当前版本不支持图片滤镜。')
   }

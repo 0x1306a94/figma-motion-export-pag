@@ -147,7 +147,6 @@ updateSelection()
 function updateSelection(): void {
   const selection = figma.currentPage.selection
   const node = selection.length === 1 ? selection[0] : undefined
-  console.log('node', node)
   postMessage({
     type: 'selection-changed',
     canExport: node !== undefined,

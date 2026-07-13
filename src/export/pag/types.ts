@@ -41,6 +41,7 @@ export interface PagLayerBase {
   startTime: number
   duration: number
   transform: PagTransform
+  blendMode?: PagBlendMode
   masks?: PagMask[]
   effects?: PagFastBlurEffect[]
   trackMatteType?: PagTrackMatteType
@@ -88,6 +89,27 @@ export type PagShapeGeometry =
 export interface PagShapePaint {
   color: PagColor
   opacity: number
+  blendMode?: PagBlendMode
+}
+
+export enum PagBlendMode {
+  Normal = 0,
+  Multiply = 1,
+  Screen = 2,
+  Overlay = 3,
+  Darken = 4,
+  Lighten = 5,
+  ColorDodge = 6,
+  ColorBurn = 7,
+  HardLight = 8,
+  SoftLight = 9,
+  Difference = 10,
+  Exclusion = 11,
+  Hue = 12,
+  Saturation = 13,
+  Color = 14,
+  Luminosity = 15,
+  Add = 16,
 }
 
 export interface PagShapeStroke extends PagShapePaint {
@@ -108,6 +130,12 @@ export interface PagShapeLayer extends PagLayerBase {
 export interface PagImageLayer extends PagLayerBase {
   type: 'image'
   imageId: number
+}
+
+export interface PagPreComposeLayer extends PagLayerBase {
+  type: 'precompose'
+  compositionId: number
+  compositionStartTime: number
 }
 
 export enum ParagraphJustification {
@@ -153,7 +181,7 @@ export interface PagImage {
   explicitSize: boolean
 }
 
-export type PagLayer = PagSolidLayer | PagShapeLayer | PagImageLayer | PagTextLayer
+export type PagLayer = PagSolidLayer | PagShapeLayer | PagImageLayer | PagTextLayer | PagPreComposeLayer
 
 export interface PagComposition {
   id: number
@@ -163,5 +191,6 @@ export interface PagComposition {
   frameRate: number
   backgroundColor: PagColor
   images?: PagImage[]
+  compositions?: PagComposition[]
   layers: PagLayer[]
 }

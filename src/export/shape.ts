@@ -7,6 +7,7 @@ import type {
 } from './pag/types'
 import { toPagColor } from './solid'
 import { ExportError } from './types'
+import { readBlendMode } from './blend-mode'
 
 export function readShapeNode(
   node: SceneNode,
@@ -123,8 +124,11 @@ function readFill(node: RectangleNode | EllipseNode | VectorNode): PagShapePaint
     throwNodeError(node, '当前版本仅支持一个可见纯色填充。')
   }
   const fill = fills[0]
-  if ((fill.blendMode ?? 'NORMAL') !== 'NORMAL') throwNodeError(node, '当前版本不支持填充混合模式。')
-  return { color: toPagColor(fill.color), opacity: Math.round((fill.opacity ?? 1) * 255) }
+  return {
+    color: toPagColor(fill.color),
+    opacity: Math.round((fill.opacity ?? 1) * 255),
+    blendMode: readBlendMode(fill.blendMode, node),
+  }
 }
 
 function readStroke(node: RectangleNode | EllipseNode | VectorNode): PagShapeStroke | undefined {
@@ -137,7 +141,6 @@ function readStroke(node: RectangleNode | EllipseNode | VectorNode): PagShapeStr
   if (node.dashPattern.length > 0) throwNodeError(node, '当前版本不支持虚线描边。')
   if (node.strokeWeight === figma.mixed) throwNodeError(node, '当前版本不支持不同边宽的描边。')
   const stroke = strokes[0]
-  if ((stroke.blendMode ?? 'NORMAL') !== 'NORMAL') throwNodeError(node, '当前版本不支持描边混合模式。')
   return {
     color: toPagColor(stroke.color),
     opacity: Math.round((stroke.opacity ?? 1) * 255),
@@ -145,6 +148,7 @@ function readStroke(node: RectangleNode | EllipseNode | VectorNode): PagShapeStr
     lineCap: readLineCap(node.strokeCap),
     lineJoin: readLineJoin(node.strokeJoin),
     miterLimit: node.strokeMiterLimit,
+    blendMode: readBlendMode(stroke.blendMode, node),
   }
 }
 

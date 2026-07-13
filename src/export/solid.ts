@@ -1,5 +1,6 @@
 import { ExportError } from './types'
 import type { PagColor, PagSolidLayer, PagTransform } from './pag/types'
+import { readBlendMode } from './blend-mode'
 
 const solidMarkerPattern = /^#solid(?:\s|$)/
 
@@ -52,7 +53,6 @@ export function readSolidNode(
   if (rectangle.width <= 0 || rectangle.height <= 0) fail('带 #solid 标记的矩形宽高必须大于 0。')
 
   const fill = visibleFills[0] as SolidPaint
-  if ((fill.blendMode ?? 'NORMAL') !== 'NORMAL') fail('带 #solid 标记的填充不能使用混合模式。')
   const fillOpacity = fill.opacity ?? 1
   return {
     type: 'solid',
@@ -63,6 +63,7 @@ export function readSolidNode(
     width: Math.max(1, Math.round(rectangle.width)),
     height: Math.max(1, Math.round(rectangle.height)),
     color: toPagColor(fill.color),
+    blendMode: readBlendMode(fill.blendMode, node),
     transform: {
       ...readNodeTransform(node, context),
       opacity: Math.round(rectangle.opacity * fillOpacity * 255),
