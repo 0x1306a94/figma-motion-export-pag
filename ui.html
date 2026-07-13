@@ -1,17 +1,152 @@
-<h2>Rectangle Creator</h2>
-<p>Count: <input id="count" type="number" value="5"></p>
-<button id="create">Create</button>
-<button id="cancel">Cancel</button>
-<script>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 16px; color: #222; font: 12px/1.45 Inter, sans-serif; }
+    h2 { margin: 0 0 14px; font-size: 16px; }
+    .selection { min-height: 34px; margin-bottom: 14px; padding: 8px; border-radius: 6px; background: #f3f3f3; }
+    .row { display: flex; align-items: center; justify-content: space-between; min-height: 38px; }
+    select { width: 112px; padding: 5px; }
+    input[type="range"] { width: 150px; vertical-align: middle; }
+    .quality { display: flex; align-items: center; gap: 8px; }
+    .quality output { width: 24px; text-align: right; }
+    .status { min-height: 58px; max-height: 112px; margin: 12px 0; overflow: auto; color: #555; white-space: pre-wrap; }
+    .status.error { color: #d92d20; }
+    .actions { display: flex; gap: 8px; }
+    button { flex: 1; height: 34px; border: 0; border-radius: 6px; background: #0d99ff; color: white; font-weight: 600; }
+    button.secondary { background: #e5e5e5; color: #333; }
+    button:disabled { background: #b8b8b8; }
+  </style>
+</head>
+<body>
+  <h2>Figma Motion to PAG</h2>
+  <div id="selection" class="selection">请选择一个顶层 Frame</div>
+  <label class="row">
+    <span>导出帧率</span>
+    <select id="frame-rate">
+      <option value="24">24 fps</option>
+      <option value="30" selected>30 fps</option>
+      <option value="60">60 fps</option>
+    </select>
+  </label>
+  <label class="row">
+    <span>图片使用 WebP</span>
+    <input id="webp-enabled" type="checkbox" checked>
+  </label>
+  <label class="row">
+    <span>WebP 质量</span>
+    <span class="quality">
+      <input id="webp-quality" type="range" min="0" max="100" step="1" value="80">
+      <output id="quality-value">80</output>
+    </span>
+  </label>
+  <div id="status" class="status"></div>
+  <div class="actions">
+    <button id="export" disabled>导出 PAG</button>
+    <button id="cancel" class="secondary" disabled>取消</button>
+  </div>
 
-document.getElementById('create').onclick = () => {
-  const textbox = document.getElementById('count');
-  const count = parseInt(textbox.value, 10);
-  parent.postMessage({ pluginMessage: { type: 'create-shapes', count } }, '*')
-}
+  <script>
+    const selection = document.getElementById('selection')
+    const frameRate = document.getElementById('frame-rate')
+    const webpEnabled = document.getElementById('webp-enabled')
+    const webpQuality = document.getElementById('webp-quality')
+    const qualityValue = document.getElementById('quality-value')
+    const status = document.getElementById('status')
+    const exportButton = document.getElementById('export')
+    const cancelButton = document.getElementById('cancel')
+    let canExport = false
+    let exporting = false
 
-document.getElementById('cancel').onclick = () => {
-  parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*')
-}
+    webpEnabled.onchange = () => {
+      webpQuality.disabled = !webpEnabled.checked
+    }
+    webpQuality.oninput = () => {
+      qualityValue.value = webpQuality.value
+    }
+    exportButton.onclick = () => {
+      setExporting(true)
+      status.className = 'status'
+      status.textContent = '准备导出…'
+      parent.postMessage({
+        pluginMessage: {
+          type: 'start-export',
+          options: {
+            frameRate: Number(frameRate.value),
+            webpEnabled: webpEnabled.checked,
+            webpQuality: Number(webpQuality.value),
+          },
+        },
+      }, '*')
+    }
+    cancelButton.onclick = () => {
+      parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*')
+      status.className = 'status'
+      status.textContent = '导出已取消。'
+      setExporting(false)
+    }
 
-</script>
+    onmessage = async (event) => {
+      const message = event.data.pluginMessage
+      if (message.type === 'selection-changed') {
+        canExport = message.canExport
+        selection.textContent = message.canExport ? `已选择：${message.selectionName}` : '请选择一个顶层 Frame'
+        exportButton.disabled = exporting || !canExport
+      } else if (message.type === 'progress') {
+        status.className = 'status'
+        status.textContent = message.message
+      } else if (message.type === 'error') {
+        status.className = 'status error'
+        status.textContent = message.issues.map((issue) => {
+          return issue.nodeName ? `${issue.nodeName}：${issue.message}` : issue.message
+        }).join('\n')
+        setExporting(false)
+      } else if (message.type === 'complete') {
+        const blob = new Blob([message.bytes], { type: 'application/octet-stream' })
+        const link = document.createElement('a')
+        link.href = URL.createObjectURL(blob)
+        link.download = message.fileName
+        link.click()
+        URL.revokeObjectURL(link.href)
+        status.className = 'status'
+        status.textContent = message.warnings.length === 0
+          ? '导出完成。'
+          : message.warnings.map((warning) => warning.message).join('\n')
+        setExporting(false)
+      } else if (message.type === 'encode-webp') {
+        await encodeWebp(message)
+      }
+    }
+
+    function setExporting(value) {
+      exporting = value
+      exportButton.disabled = value || !canExport
+      cancelButton.disabled = !value
+    }
+
+    async function encodeWebp(message) {
+      try {
+        const source = new Blob([message.bytes], { type: message.mimeType })
+        const bitmap = await createImageBitmap(source)
+        const canvas = document.createElement('canvas')
+        canvas.width = bitmap.width
+        canvas.height = bitmap.height
+        canvas.getContext('2d').drawImage(bitmap, 0, 0)
+        bitmap.close()
+        const blob = await new Promise((resolve, reject) => {
+          canvas.toBlob((value) => value ? resolve(value) : reject(new Error('WebP 编码失败。')),
+            'image/webp', message.quality / 100)
+        })
+        const bytes = new Uint8Array(await blob.arrayBuffer())
+        parent.postMessage({ pluginMessage: { type: 'webp-result', requestId: message.requestId, bytes } }, '*')
+      } catch (error) {
+        parent.postMessage({
+          pluginMessage: { type: 'webp-result', requestId: message.requestId, error: String(error) },
+        }, '*')
+      }
+    }
+  </script>
+</body>
+</html>

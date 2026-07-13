@@ -6,8 +6,11 @@
   "main": "code.js",
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit && esbuild src/code.ts --bundle --target=es2020 --outfile=code.js",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "lint:fix": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --fix",
+    "test": "tsx --test test/*.test.ts",
+    "test:native": "node test/native/run.js",
+    "verify": "npm test && npm run test:native && npm run build && npm run lint",
     "watch": "esbuild src/code.ts --bundle --target=es2020 --outfile=code.js --watch",
     "pack": "npm run build && node scripts/pack.js"
   },
@@ -23,6 +26,7 @@
     "@figma/plugin-typings": "^1.130.0",
     "esbuild": "^0.28.1",
     "eslint": "^9.39.4",
+    "tsx": "^4.23.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.57.1"
   }

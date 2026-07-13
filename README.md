@@ -1,40 +1,32 @@
-Below are the steps to get your plugin running. You can also find instructions at:
+# Figma Motion to PAG
 
-  https://www.figma.com/plugin-docs/plugin-quickstart-guide/
+Figma 插件：读取顶层 Frame 的静态图层与 Motion Transform，使用纯 TypeScript 生成二进制 `.pag`，不依赖 WASM。
 
-This plugin template uses Typescript and NPM, two standard tools in creating JavaScript applications.
+## 开发
 
-First, download Node.js which comes with NPM. This will allow you to install TypeScript and other
-libraries. You can find the download link here:
+```bash
+npm install
+npm run build
+```
 
-  https://nodejs.org/en/download/
+在 Figma Desktop 中选择 **Plugins → Development → Import plugin from manifest…**，导入本目录的 `manifest.json`。
 
-Next, install TypeScript using the command:
+常用命令：
 
-  npm install -g typescript
+```bash
+npm run watch
+npm run verify
+npm run pack
+```
 
-Finally, in the directory of your plugin, get the latest type definitions for the plugin API by running:
+`npm run test:native` 会链接已构建的 `build_libpag/libpag.a`，使用 `PAGFile::Load()` 验证 TypeScript 生成的 PAG 文件。
 
-  npm install --save-dev @figma/plugin-typings
+## 当前支持
 
-If you are familiar with JavaScript, TypeScript will look very familiar. In fact, valid JavaScript code
-is already valid Typescript code.
+- 导出帧率：24 / 30 / 60 fps，默认 30。
+- `#solid` Rectangle → PAG SolidLayer。
+- Rectangle、Ellipse、单 Vector Path 的纯色 Fill/Stroke。
+- Rectangle 单 IMAGE Paint；FIT/FILL，默认 UI Canvas 转 WebP，质量默认 80。
+- Motion：Opacity、Translation、Rotation、Scale；单 SET track；Linear、Hold、Custom Cubic Bezier。
 
-TypeScript adds type annotations to variables. This allows code editors such as Visual Studio Code
-to provide information about the Figma API while you are writing code, as well as help catch bugs
-you previously didn't notice.
-
-For more information, visit https://www.typescriptlang.org/
-
-Using TypeScript requires a compiler to convert TypeScript (code.ts) into JavaScript (code.js)
-for the browser to run.
-
-We recommend writing TypeScript code using Visual Studio code:
-
-1. Download Visual Studio Code if you haven't already: https://code.visualstudio.com/.
-2. Open this directory in Visual Studio Code.
-3. Compile TypeScript to JavaScript: Run the "Terminal > Run Build Task..." menu item,
-    then select "npm: watch". You will have to do this again every time
-    you reopen Visual Studio Code.
-
-That's it! Visual Studio Code will regenerate the JavaScript file every time you save.
+遇到不支持的图层、属性、轨道或缓动会中断导出，并在插件面板显示具体图层错误。
