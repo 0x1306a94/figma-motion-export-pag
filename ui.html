@@ -219,7 +219,9 @@
         status.className = 'status'
         status.textContent = message.warnings.length === 0
           ? '导出完成。'
-          : message.warnings.map((warning) => warning.message).join('\n')
+          : message.warnings.map((warning) => {
+            return warning.nodeName ? `${warning.nodeName}：${warning.message}` : warning.message
+          }).join('\n')
         setExporting(false)
       } else if (message.type === 'encode-webp') {
         await encodeWebp(message)

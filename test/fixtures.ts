@@ -33,16 +33,36 @@ export const solidFixture: PagComposition = {
       backgroundColor: { red: 255, green: 255, blue: 255 },
       layers: [
         {
-          type: 'solid',
+          type: 'shape',
           id: 8,
           name: 'Overlay',
           startTime: 0,
           duration: 30,
-          width: 100,
-          height: 100,
-          color: { red: 24, green: 41, blue: 228 },
-          blendMode: 16,
-          transform: { opacity: 51 },
+          transform: {},
+          geometry: {
+            type: 'rectangle',
+            size: { x: 100, y: 100 },
+            position: { x: 50, y: 50 },
+            roundness: 8,
+          },
+          fillRule: 0,
+          fill: {
+            kind: 'gradient',
+            fillType: 0,
+            startPoint: { x: 0, y: 50 },
+            endPoint: { x: 100, y: 50 },
+            colors: {
+              alphaStops: [
+                { position: 0, midpoint: 0.5, opacity: 255 },
+                { position: 1, midpoint: 0.5, opacity: 255 },
+              ],
+              colorStops: [
+                { position: 0, midpoint: 0.5, color: { red: 35, green: 164, blue: 244 } },
+                { position: 1, midpoint: 0.5, color: { red: 254, green: 245, blue: 244 } },
+              ],
+            },
+            opacity: 255,
+          },
         },
       ],
     },

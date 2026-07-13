@@ -27,7 +27,7 @@ export async function readMaskMatte(
   let shape: Extract<PagLayer, { type: 'shape' }> | null = null
   if (!hasVisibleEffect(node)) {
     try {
-      shape = readShapeNode(node, id, context.duration, transform)
+      shape = readShapeNode(node, id, context.duration, transform, context.warnings)
     } catch {
       // 复杂填充、文本或容器使用完整渲染结果作为 Track Matte。
     }

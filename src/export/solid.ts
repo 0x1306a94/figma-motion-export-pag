@@ -14,6 +14,11 @@ export interface ExportTransformContext {
   rotation: number
 }
 
+export interface NodeTransformResult {
+  transform: PagTransform
+  residual: Transform
+}
+
 export function hasSolidMarker(name: string): boolean {
   return solidMarkerPattern.test(name)
 }
@@ -23,6 +28,7 @@ export function readSolidNode(
   id: number,
   duration: number,
   context: ExportTransformContext,
+  visibleFills?: readonly Paint[] | null,
 ): PagSolidLayer | null {
   if (!hasSolidMarker(node.name)) return null
   const fail = (message: string): never => {
@@ -41,8 +47,8 @@ export function readSolidNode(
   }
 
   if (rectangle.fills === figma.mixed) fail('带 #solid 标记的矩形不能使用混合填充。')
-  const visibleFills = (rectangle.fills as readonly Paint[]).filter((paint) => paint.visible !== false)
-  if (visibleFills.length !== 1 || visibleFills[0].type !== 'SOLID') {
+  const fills = visibleFills ?? (rectangle.fills as readonly Paint[]).filter((paint) => paint.visible !== false)
+  if (fills.length !== 1 || fills[0].type !== 'SOLID') {
     fail('带 #solid 标记的矩形必须且只能包含一个可见纯色填充。')
   }
   const hasVisibleStroke =
@@ -52,7 +58,7 @@ export function readSolidNode(
   if (hasVisibleStroke) fail('带 #solid 标记的矩形不能包含可见描边。')
   if (rectangle.width <= 0 || rectangle.height <= 0) fail('带 #solid 标记的矩形宽高必须大于 0。')
 
-  const fill = visibleFills[0] as SolidPaint
+  const fill = fills[0] as SolidPaint
   const fillOpacity = fill.opacity ?? 1
   return {
     type: 'solid',
@@ -112,21 +118,56 @@ export function createExportTransformContext(root: SceneNode): ExportTransformCo
 }
 
 export function readNodeTransform(node: SceneNode, context: ExportTransformContext): PagTransform {
-  const transform = multiplyTransform(context.absoluteToExportTransform, node.absoluteTransform)
-  const scaleX = Math.hypot(transform[0][0], transform[1][0])
-  const scaleY = Math.hypot(transform[0][1], transform[1][1])
-  const dotProduct = transform[0][0] * transform[0][1] + transform[1][0] * transform[1][1]
-  if (scaleX === 0 || scaleY === 0 || Math.abs(dotProduct / (scaleX * scaleY)) > 0.0001) {
+  const result = readNodeTransformWithResidual(node, context)
+  const [[a, c], [b, d]] = result.residual
+  if (
+    Math.abs(a - 1) > 0.0001
+    || Math.abs(b) > 0.0001
+    || Math.abs(c) > 0.0001
+    || Math.abs(d - 1) > 0.0001
+  ) {
     throw new ExportError([
       { nodeId: node.id, nodeName: node.name, message: '当前版本不支持倾斜或退化的图层变换。' },
     ])
   }
+  return result.transform
+}
+
+export function readNodeTransformWithResidual(
+  node: SceneNode,
+  context: ExportTransformContext,
+): NodeTransformResult {
+  const transform = multiplyTransform(context.absoluteToExportTransform, node.absoluteTransform)
+  const scaleX = Math.hypot(transform[0][0], transform[1][0])
   const determinant =
     transform[0][0] * transform[1][1] - transform[0][1] * transform[1][0]
+  if (scaleX < 0.000001 || Math.abs(determinant) < 0.000001) {
+    throw new ExportError([
+      { nodeId: node.id, nodeName: node.name, message: '当前版本不支持倾斜或退化的图层变换。' },
+    ])
+  }
+  const scaleY = determinant / scaleX
+  const cosine = transform[0][0] / scaleX
+  const sine = transform[1][0] / scaleX
+  const layerMatrix: Transform = [
+    [cosine * scaleX, -sine * scaleY, 0],
+    [sine * scaleX, cosine * scaleY, 0],
+  ]
+  const inverseLayer: Transform = [
+    [layerMatrix[1][1] / determinant, -layerMatrix[0][1] / determinant, 0],
+    [-layerMatrix[1][0] / determinant, layerMatrix[0][0] / determinant, 0],
+  ]
+  const residual = multiplyTransform(inverseLayer, [
+    [transform[0][0], transform[0][1], 0],
+    [transform[1][0], transform[1][1], 0],
+  ])
   return {
-    position: { x: transform[0][2], y: transform[1][2] },
-    scale: { x: scaleX, y: determinant < 0 ? -scaleY : scaleY },
-    rotation: (Math.atan2(transform[1][0], transform[0][0]) * 180) / Math.PI,
+    transform: {
+      position: { x: transform[0][2], y: transform[1][2] },
+      scale: { x: scaleX, y: scaleY },
+      rotation: (Math.atan2(transform[1][0], transform[0][0]) * 180) / Math.PI,
+    },
+    residual,
   }
 }
 

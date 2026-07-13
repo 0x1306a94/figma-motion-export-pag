@@ -33,6 +33,7 @@ const enum TagCode {
   FontTables = 1,
   TextSource = 8,
   CompositionReference = 12,
+  GradientFill = 22,
 }
 
 const enum LayerType {
@@ -380,13 +381,16 @@ function writeShape(stream: EncodeStream, layer: PagShapeLayer): void {
       appendAttributeBlock(content, flags, values)
     })
   }
-  if (layer.fill !== undefined) writeFill(stream, layer)
+  if (layer.fill !== undefined) {
+    if ('kind' in layer.fill) writeGradientFill(stream, layer)
+    else writeFill(stream, layer)
+  }
   if (layer.stroke !== undefined) writeStroke(stream, layer)
 }
 
 function writeFill(stream: EncodeStream, layer: PagShapeLayer): void {
   const fill = layer.fill
-  if (fill === undefined) return
+  if (fill === undefined || 'kind' in fill) return
   writeTag(stream, TagCode.Fill, (content) => {
     const flags = new EncodeStream()
     const values = new EncodeStream()
@@ -397,6 +401,46 @@ function writeFill(stream: EncodeStream, layer: PagShapeLayer): void {
     writeStaticByteProperty(flags, values, fill.opacity, 255)
     appendAttributeBlock(content, flags, values)
   })
+}
+
+function writeGradientFill(stream: EncodeStream, layer: PagShapeLayer): void {
+  const fill = layer.fill
+  if (fill === undefined || !('kind' in fill)) return
+  writeTag(stream, TagCode.GradientFill, (content) => {
+    const flags = new EncodeStream()
+    const values = new EncodeStream()
+    writeValue(flags, (fill.blendMode ?? 0) !== 0, () => values.writeUint8(fill.blendMode ?? 0))
+    writeValue(flags, false, () => undefined)
+    writeValue(flags, layer.fillRule !== 0, () => values.writeUint8(layer.fillRule))
+    writeValue(flags, fill.fillType !== 0, () => values.writeUint8(fill.fillType))
+    writeStaticPointProperty(flags, values, fill.startPoint, { x: 0, y: 0 })
+    writeStaticPointProperty(flags, values, fill.endPoint, { x: 100, y: 0 })
+    flags.writeBit(true)
+    flags.writeBit(false)
+    writeGradientColor(values, fill.colors)
+    writeStaticByteProperty(flags, values, fill.opacity, 255)
+    appendAttributeBlock(content, flags, values)
+  })
+}
+
+function writeGradientColor(stream: EncodeStream, gradient: import('./types').PagGradientColor): void {
+  stream.writeEncodedUint(gradient.alphaStops.length)
+  stream.writeEncodedUint(gradient.colorStops.length)
+  for (const stop of gradient.alphaStops) {
+    writeGradientPosition(stream, stop.position)
+    writeGradientPosition(stream, stop.midpoint)
+    stream.writeUint8(clampByte(stop.opacity))
+  }
+  for (const stop of gradient.colorStops) {
+    writeGradientPosition(stream, stop.position)
+    writeGradientPosition(stream, stop.midpoint)
+    writeColor(stream, stop.color)
+  }
+}
+
+function writeGradientPosition(stream: EncodeStream, value: number): void {
+  const normalized = Math.max(0, Math.min(1, value))
+  stream.writeUint16(Math.trunc(normalized / 0.00002))
 }
 
 function writeStroke(stream: EncodeStream, layer: PagShapeLayer): void {

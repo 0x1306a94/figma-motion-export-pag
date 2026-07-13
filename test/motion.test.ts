@@ -413,6 +413,62 @@ test('WIDTH 与 HEIGHT 以左上角为锚点映射为二维 Scale', () => {
   assert.deepEqual(scale.keyframes[scale.keyframes.length - 1].endValue, { x: 1, y: 1 })
 })
 
+test('WIDTH/HEIGHT 尺寸比例与 SCALE 动画逐帧相乘', () => {
+  const root = {}
+  const node = {
+    id: '1:10',
+    name: 'Size And Scale Motion',
+    parent: root,
+    width: 200,
+    height: 100,
+    animations: {
+      WIDTH: {
+        baseValue: { type: 'FLOAT', value: 100 },
+        timelineDuration: 1,
+        tracks: [{
+          id: 'width',
+          keyframeOperation: 'OFFSET',
+          keyframes: [
+            { id: 'width-start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 0 } },
+            { id: 'width-end', timelinePosition: 1, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 100 } },
+          ],
+        }],
+      },
+      SCALE_XY: {
+        baseValue: { type: 'VECTOR', value: { x: 1, y: 1 } },
+        timelineDuration: 1,
+        tracks: [{
+          id: 'scale',
+          keyframeOperation: 'SET',
+          keyframes: [
+            { id: 'scale-start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'VECTOR', value: { x: 1, y: 1 } } },
+            { id: 'scale-end', timelinePosition: 1, easing: { type: 'LINEAR' }, value: { type: 'VECTOR', value: { x: 2, y: 3 } } },
+          ],
+        }],
+      },
+    },
+    relativeTransform: [
+      [1, 0, 10],
+      [0, 1, 20],
+    ],
+  }
+  const transform = readMotionTransform(
+    node as unknown as SceneNode,
+    root as FrameNode,
+    2,
+    { position: { x: 10, y: 20 }, scale: { x: 1, y: 1 } },
+    [],
+    identityContext,
+  )
+  const scale = transform.scale as {
+    keyframes: Array<{ startValue: PagPoint; endValue: PagPoint }>
+  }
+  assert.equal(transform.anchorPoint, undefined)
+  assert.deepEqual(transform.position, { x: 10, y: 20 })
+  assert.deepEqual(scale.keyframes[0].startValue, { x: 0.5, y: 1 })
+  assert.deepEqual(scale.keyframes[scale.keyframes.length - 1].endValue, { x: 2, y: 3 })
+})
+
 test('根 Frame 水平翻转会映射 Motion 位移、旋转和缩放', () => {
   const root = {}
   const node = {

@@ -160,49 +160,54 @@ export function readMotionTransform(
   if (scaleXY !== undefined && (scaleX !== undefined || scaleY !== undefined)) {
     fail(node, 'SCALE_XY 不能与 SCALE_X/Y 同时使用。')
   }
-  if (
-    (width !== undefined || height !== undefined) &&
-    (scaleXY !== undefined || scaleX !== undefined || scaleY !== undefined)
-  ) {
-    fail(node, 'WIDTH/HEIGHT 不能与 SCALE_X/Y/XY 同时使用。')
-  }
   if ((width !== undefined || height !== undefined) && rotation !== undefined) {
     fail(node, '当前版本不支持 WIDTH/HEIGHT 与 ROTATION 同时动画。')
   }
+  let sizeScale: PagProperty<PagPoint> | undefined
   if (width !== undefined && height !== undefined) {
-    result.scale = combineNumberProperties(width, height)
+    sizeScale = combineNumberProperties(width, height)
   } else if (width !== undefined) {
-    result.scale = numberToPointProperty(width, staticScale.y, true)
+    sizeScale = numberToPointProperty(width, staticScale.y, true)
   } else if (height !== undefined) {
-    result.scale = numberToPointProperty(height, staticScale.x, false)
-  } else if (scaleXY !== undefined) {
-    result.scale = mapPointProperty(scaleXY, (point) => ({
+    sizeScale = numberToPointProperty(height, staticScale.x, false)
+  }
+  let motionScale: PagProperty<PagPoint> | undefined
+  if (scaleXY !== undefined) {
+    motionScale = mapPointProperty(scaleXY, (point) => ({
       x: point.x * nodeContext.scaleX,
       y: point.y * nodeContext.scaleY * nodeContext.orientation,
     }))
   } else if (scaleX !== undefined && scaleY !== undefined) {
-    result.scale = combineNumberProperties(
+    motionScale = combineNumberProperties(
       mapNumberProperty(scaleX, nodeContext.scaleX, 0),
       mapNumberProperty(scaleY, nodeContext.scaleY * nodeContext.orientation, 0),
     )
   } else if (scaleX !== undefined) {
-    result.scale = numberToPointProperty(
+    motionScale = numberToPointProperty(
       mapNumberProperty(scaleX, nodeContext.scaleX, 0),
       staticScale.y,
       true,
     )
   } else if (scaleY !== undefined) {
-    result.scale = numberToPointProperty(
+    motionScale = numberToPointProperty(
       mapNumberProperty(scaleY, nodeContext.scaleY * nodeContext.orientation, 0),
       staticScale.x,
       false,
     )
   }
+  if (sizeScale !== undefined && motionScale !== undefined) {
+    const sizeRatio = mapPointProperty(sizeScale, (point) => ({
+      x: point.x / staticScale.x,
+      y: point.y / staticScale.y,
+    }))
+    result.scale = multiplyPointProperties(motionScale, sizeRatio)
+  } else {
+    result.scale = sizeScale ?? motionScale ?? result.scale
+  }
   if (
     rotation !== undefined ||
-    scaleXY !== undefined ||
-    scaleX !== undefined ||
-    scaleY !== undefined
+    (sizeScale === undefined &&
+      (scaleXY !== undefined || scaleX !== undefined || scaleY !== undefined))
   ) {
     applyMotionAnchor(node, result, nodeContext)
   }
@@ -585,7 +590,28 @@ function combineNumberProperties(
   }
 }
 
-function getPropertyLastFrame(property: PagProperty<number>): number {
+function multiplyPointProperties(
+  left: PagProperty<PagPoint>,
+  right: PagProperty<PagPoint>,
+): PagProperty<PagPoint> {
+  if (!isAnimated(left) && !isAnimated(right)) return pointMath.multiply(left, right)
+  const lastFrame = Math.max(getPropertyLastFrame(left), getPropertyLastFrame(right))
+  const samples = Array.from({ length: lastFrame + 1 }, (_, frame) =>
+    pointMath.multiply(readPointAt(left, frame), readPointAt(right, frame)),
+  )
+  if (samples.every((value) => pointMath.equals(value, samples[0]))) return samples[0]
+  return {
+    keyframes: samples.slice(0, -1).map((value, frame) => ({
+      startTime: frame,
+      endTime: frame + 1,
+      startValue: value,
+      endValue: samples[frame + 1],
+      interpolation: 1,
+    })),
+  }
+}
+
+function getPropertyLastFrame<T>(property: PagProperty<T>): number {
   if (!isAnimated(property) || property.keyframes.length === 0) return 0
   return property.keyframes[property.keyframes.length - 1].endTime
 }

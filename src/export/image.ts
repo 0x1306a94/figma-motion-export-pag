@@ -26,9 +26,10 @@ export async function readImageNode(
   duration: number,
   transform: PagTransform,
   context: ImageReadContext,
+  visibleFills?: readonly Paint[] | null,
 ): Promise<ImageReadResult | null> {
   if (node.type !== 'RECTANGLE' || node.fills === figma.mixed) return null
-  const fills = (node.fills as readonly Paint[]).filter((paint) => paint.visible !== false)
+  const fills = visibleFills ?? (node.fills as readonly Paint[]).filter((paint) => paint.visible !== false)
   if (fills.length !== 1 || fills[0].type !== 'IMAGE') return null
   return readImagePaintLayer(node, fills[0], id, duration, transform, context)
 }

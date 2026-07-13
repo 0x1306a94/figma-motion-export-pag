@@ -92,6 +92,27 @@ export interface PagShapePaint {
   blendMode?: PagBlendMode
 }
 
+export enum PagGradientFillType {
+  Linear = 0,
+  Radial = 1,
+  Angle = 2,
+}
+
+export interface PagGradientColor {
+  alphaStops: Array<{ position: number; midpoint: number; opacity: number }>
+  colorStops: Array<{ position: number; midpoint: number; color: PagColor }>
+}
+
+export interface PagGradientShapePaint {
+  kind: 'gradient'
+  blendMode?: PagBlendMode
+  fillType: PagGradientFillType
+  startPoint: PagPoint
+  endPoint: PagPoint
+  colors: PagGradientColor
+  opacity: number
+}
+
 export enum PagBlendMode {
   Normal = 0,
   Multiply = 1,
@@ -122,7 +143,7 @@ export interface PagShapeStroke extends PagShapePaint {
 export interface PagShapeLayer extends PagLayerBase {
   type: 'shape'
   geometry: PagShapeGeometry
-  fill?: PagShapePaint
+  fill?: PagShapePaint | PagGradientShapePaint
   fillRule: number
   stroke?: PagShapeStroke
 }

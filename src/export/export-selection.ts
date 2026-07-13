@@ -3,11 +3,17 @@ import type { PagComposition, PagImage, PagLayer, PagSolidLayer } from './pag/ty
 import { readLayerEffects } from './effect'
 import { applyImageFit, readImageNode, readImagePaintLayer } from './image'
 import { composeAncestorMotionTransform, readMotionTransform } from './motion'
-import { readShapeNode } from './shape'
+import {
+  readInsideStrokeLayer,
+  readOutsideStrokeLayer,
+  readShapeNode,
+  readShapePaintLayer,
+} from './shape'
 import {
   createExportTransformContext,
   hasSolidMarker,
   readNodeTransform,
+  readNodeTransformWithResidual,
   readSolidNode,
   toPagColor,
 } from './solid'
@@ -17,6 +23,7 @@ import { readMaskMatte } from './mask'
 import type { FigmaMaskNode } from './mask'
 import { readTextNode } from './text'
 import { readBlendMode } from './blend-mode'
+import { isSupportedGradientPaint, readVisibleFills, type SupportedFillPaint } from './fills'
 
 export interface ExportResult {
   bytes: Uint8Array
@@ -49,18 +56,29 @@ export async function exportSelection(
     ancestors: SceneNode[]
   }
 
-  const readMultiFillLayer = async (node: SceneNode): Promise<PagLayer | null> => {
-    if (node.type !== 'RECTANGLE' || node.fills === figma.mixed) return null
-    const visibleFills = node.fills.filter((paint) => paint.visible !== false)
-    if (visibleFills.length <= 1) return null
-    if (!visibleFills.every((paint) => paint.type === 'SOLID' || paint.type === 'IMAGE')) return null
-    const fills = visibleFills as Array<SolidPaint | ImagePaint>
+  const readMultiFillLayer = async (
+    node: SceneNode,
+    visibleFills: readonly Paint[] | null,
+    nodeTransform: PagLayer['transform'],
+    residual: Transform,
+  ): Promise<PagLayer | null> => {
+    if (
+      node.type !== 'RECTANGLE'
+      && node.type !== 'ELLIPSE'
+      && node.type !== 'VECTOR'
+    ) return null
+    if (visibleFills === null || visibleFills.length <= 1) return null
+    if (!visibleFills.every((paint) =>
+      paint.type === 'SOLID' || paint.type === 'IMAGE' || isSupportedGradientPaint(paint)
+    )) return null
+    const fills = visibleFills as SupportedFillPaint[]
+    if (node.type !== 'RECTANGLE' && fills.some((paint) => paint.type === 'IMAGE')) return null
 
     const childLayers: PagLayer[] = []
     for (const paint of fills) {
       if (paint.type === 'IMAGE') {
         const imageResult = await readImagePaintLayer(
-          node,
+          node as RectangleNode,
           paint,
           nextId++,
           duration,
@@ -77,18 +95,25 @@ export async function exportSelection(
         childLayers.push(imageResult.layer)
         continue
       }
-      childLayers.push({
-        type: 'solid',
-        id: nextId++,
-        name: node.name,
-        startTime: 0,
+      if (paint.type !== 'SOLID') {
+        childLayers.push(readShapePaintLayer(
+          node,
+          paint,
+          nextId++,
+          duration,
+          {},
+          residual,
+        ))
+        continue
+      }
+      childLayers.push(readShapePaintLayer(
+        node,
+        paint,
+        nextId++,
         duration,
-        width: Math.max(1, Math.round(node.width)),
-        height: Math.max(1, Math.round(node.height)),
-        color: toPagColor(paint.color),
-        blendMode: readBlendMode(paint.blendMode, node),
-        transform: { opacity: Math.round((paint.opacity ?? 1) * 255) },
-      })
+        {},
+        residual,
+      ))
     }
     childLayers.reverse()
 
@@ -111,7 +136,7 @@ export async function exportSelection(
       compositionId,
       compositionStartTime: 0,
       transform: {
-        ...readNodeTransform(node, transformContext),
+        ...nodeTransform,
         opacity: Math.round(node.opacity * 255),
       },
     }
@@ -191,75 +216,6 @@ export async function exportSelection(
     }
     validateLayerNode(node)
     const effects = readLayerEffects(node, options.frameRate, warnings)
-    const multiFill = await readMultiFillLayer(node)
-    if (multiFill !== null) {
-      multiFill.effects = effects
-      multiFill.transform = readMotionTransform(
-        node,
-        root,
-        options.frameRate,
-        multiFill.transform,
-        warnings,
-        transformContext,
-      )
-      await appendLayer(node, ancestors, multiFill, mask)
-      return
-    }
-    const solid = readSolidNode(node, nextId, duration, transformContext)
-    if (solid !== null) {
-      solid.effects = effects
-      solid.transform = readMotionTransform(
-        node,
-        root,
-        options.frameRate,
-        solid.transform,
-        warnings,
-        transformContext,
-        readPaintOpacity(node),
-      )
-      nextId += 1
-      await appendLayer(node, ancestors, solid, mask)
-      return
-    }
-    const nodeTransform = readNodeTransform(node, transformContext)
-    const imageResult = await readImageNode(node, nextId, duration, nodeTransform, {
-      options,
-      imagesByHash,
-      nextImageId: () => nextImageId++,
-      encodeWebP,
-    })
-    if (imageResult !== null) {
-      const image = imageResult.layer
-      image.effects = effects
-      const motionTransform = readMotionTransform(
-        node,
-        root,
-        options.frameRate,
-        image.transform,
-        warnings,
-        transformContext,
-        readPaintOpacity(node),
-      )
-      image.transform = applyImageFit(motionTransform, imageResult.fit)
-      nextId += 1
-      await appendLayer(node, ancestors, image, mask)
-      return
-    }
-    const shape = readShapeNode(node, nextId, duration, nodeTransform)
-    if (shape !== null) {
-      shape.effects = effects
-      shape.transform = readMotionTransform(
-        node,
-        root,
-        options.frameRate,
-        shape.transform,
-        warnings,
-        transformContext,
-      )
-      nextId += 1
-      await appendLayer(node, ancestors, shape, mask)
-      return
-    }
     if ('children' in node) {
       if (effects.length > 0) {
         throw new ExportError([
@@ -280,6 +236,124 @@ export async function exportSelection(
           continue
         }
         await visit(child, childAncestors, activeMask)
+      }
+      return
+    }
+    const visibleFills = readVisibleFills(node, warnings)
+    if (visibleFills?.length === 0 && hasNoVisibleStroke(node)) return
+    const transformResult = node.type === 'VECTOR'
+      ? readNodeTransformWithResidual(node, transformContext)
+      : {
+          transform: readNodeTransform(node, transformContext),
+          residual: [[1, 0, 0], [0, 1, 0]] as Transform,
+        }
+    const multiFill = await readMultiFillLayer(
+      node,
+      visibleFills,
+      transformResult.transform,
+      transformResult.residual,
+    )
+    if (multiFill !== null) {
+      multiFill.effects = effects
+      multiFill.transform = readMotionTransform(
+        node,
+        root,
+        options.frameRate,
+        multiFill.transform,
+        warnings,
+        transformContext,
+      )
+      await appendLayer(node, ancestors, multiFill, mask)
+      return
+    }
+    const solid = readSolidNode(node, nextId, duration, transformContext, visibleFills)
+    if (solid !== null) {
+      solid.effects = effects
+      solid.transform = readMotionTransform(
+        node,
+        root,
+        options.frameRate,
+        solid.transform,
+        warnings,
+        transformContext,
+        readPaintOpacity(node, visibleFills),
+      )
+      nextId += 1
+      await appendLayer(node, ancestors, solid, mask)
+      return
+    }
+    const nodeTransform = transformResult.transform
+    const imageResult = await readImageNode(node, nextId, duration, nodeTransform, {
+      options,
+      imagesByHash,
+      nextImageId: () => nextImageId++,
+      encodeWebP,
+    }, visibleFills)
+    if (imageResult !== null) {
+      const image = imageResult.layer
+      image.effects = effects
+      const motionTransform = readMotionTransform(
+        node,
+        root,
+        options.frameRate,
+        image.transform,
+        warnings,
+        transformContext,
+        readPaintOpacity(node, visibleFills),
+      )
+      image.transform = applyImageFit(motionTransform, imageResult.fit)
+      nextId += 1
+      await appendLayer(node, ancestors, image, mask)
+      return
+    }
+    const outsideStroke =
+      node.type === 'RECTANGLE' || node.type === 'ELLIPSE' || node.type === 'VECTOR'
+        ? readOutsideStrokeLayer(
+            node,
+            0,
+            duration,
+            nodeTransform,
+            visibleFills,
+            transformResult.residual,
+          )
+        : null
+    const insideStroke =
+      node.type === 'RECTANGLE' || node.type === 'ELLIPSE' || node.type === 'VECTOR'
+      ? readInsideStrokeLayer(
+          node,
+          0,
+          duration,
+          nodeTransform,
+          transformResult.residual,
+        )
+      : null
+    const shape = readShapeNode(
+      node,
+      0,
+      duration,
+      nodeTransform,
+      warnings,
+      visibleFills,
+      transformResult.residual,
+      outsideStroke !== null || insideStroke !== null,
+    )
+    if (shape !== null || outsideStroke !== null || insideStroke !== null) {
+      const nodeLayers = insideStroke === null
+        ? [outsideStroke, shape]
+        : [shape, insideStroke]
+      for (const layer of nodeLayers) {
+        if (layer === null) continue
+        layer.id = nextId++
+        layer.effects = effects
+        layer.transform = readMotionTransform(
+          node,
+          root,
+          options.frameRate,
+          layer.transform,
+          warnings,
+          transformContext,
+        )
+        await appendLayer(node, ancestors, layer, mask)
       }
       return
     }
@@ -350,10 +424,17 @@ function validateLayerNode(node: SceneNode): void {
   }
 }
 
-function readPaintOpacity(node: SceneNode): number {
+function readPaintOpacity(node: SceneNode, visibleFills?: readonly Paint[] | null): number {
   if (!('fills' in node) || node.fills === figma.mixed) return 1
-  const fill = (node.fills as readonly Paint[]).find((paint) => paint.visible !== false)
+  const fill = (visibleFills ?? node.fills).find((paint) => paint.visible !== false)
   return fill?.opacity ?? 1
+}
+
+function hasNoVisibleStroke(node: SceneNode): boolean {
+  if (!('strokes' in node) || !('strokeWeight' in node)) return true
+  return node.strokeWeight === figma.mixed
+    || node.strokeWeight === 0
+    || node.strokes.every((paint) => paint.visible === false)
 }
 
 export function readRootBackgroundLayer(
