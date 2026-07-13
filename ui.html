@@ -3,98 +3,401 @@
 <head>
   <meta charset="utf-8">
   <style>
+    :root {
+      color-scheme: light dark;
+      --background: var(--figma-color-bg, #ffffff);
+      --background-secondary: var(--figma-color-bg-secondary, #f5f5f5);
+      --background-tertiary: var(--figma-color-bg-tertiary, #eeeeee);
+      --border: var(--figma-color-border, #e5e5e5);
+      --border-strong: var(--figma-color-border-strong, #b3b3b3);
+      --brand: var(--figma-color-bg-brand, #0d99ff);
+      --brand-hover: var(--figma-color-bg-brand-hover, #0c8ce9);
+      --danger: var(--figma-color-text-danger, #f24822);
+      --text: var(--figma-color-text, #1e1e1e);
+      --text-secondary: var(--figma-color-text-secondary, #6b6b6b);
+      --text-disabled: var(--figma-color-text-disabled, #b3b3b3);
+      --text-on-brand: var(--figma-color-text-onbrand, #ffffff);
+      --radius: 8px;
+    }
+
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 16px; color: #222; font: 12px/1.45 Inter, sans-serif; }
-    h2 { margin: 0 0 14px; font-size: 16px; }
-    .selection { min-height: 34px; margin-bottom: 14px; padding: 8px; border-radius: 6px; background: #f3f3f3; }
-    .row { display: flex; align-items: center; justify-content: space-between; min-height: 38px; }
-    select { width: 112px; padding: 5px; }
-    input[type="range"] { width: 150px; vertical-align: middle; }
-    .quality { display: flex; align-items: center; gap: 8px; }
-    .quality output { width: 24px; text-align: right; }
-    .status { min-height: 58px; max-height: 112px; margin: 12px 0; overflow: auto; color: #555; white-space: pre-wrap; }
-    .status.error { color: #d92d20; }
-    .actions { display: flex; gap: 8px; }
-    button { flex: 1; height: 34px; border: 0; border-radius: 6px; background: #0d99ff; color: white; font-weight: 600; }
-    button.secondary { background: #e5e5e5; color: #333; }
-    button:disabled { background: #b8b8b8; }
-    .developer { margin-top: 16px; padding-top: 12px; border-top: 1px solid #e5e5e5; }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font: 12px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button,
+    input,
+    select,
+    textarea { font: inherit; }
+
+    .panel { padding: 16px; }
+
+    .intro { margin-bottom: 12px; }
+
+    h2 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .intro p {
+      margin: 3px 0 0;
+      color: var(--text-secondary);
+      font-size: 11px;
+    }
+
+    .selection {
+      display: flex;
+      align-items: center;
+      min-height: 40px;
+      margin-bottom: 12px;
+      padding: 9px 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--background-secondary);
+      font-weight: 500;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .selection::before {
+      width: 7px;
+      height: 7px;
+      margin-right: 8px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--brand);
+      content: "";
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
+    }
+
+    .settings {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 46px;
+      padding: 0 12px;
+      gap: 12px;
+    }
+
+    .settings .row + .row { border-top: 1px solid var(--border); }
+
+    select,
+    input[type="number"] {
+      height: 30px;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      outline: none;
+      background: var(--background);
+      color: var(--text);
+    }
+
+    select {
+      width: 104px;
+      padding: 0 28px 0 10px;
+      appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, currentColor 50%),
+        linear-gradient(135deg, currentColor 50%, transparent 50%);
+      background-position: calc(100% - 13px) 12px, calc(100% - 9px) 12px;
+      background-repeat: no-repeat;
+      background-size: 4px 4px, 4px 4px;
+    }
+
+    input[type="checkbox"] {
+      position: relative;
+      width: 32px;
+      height: 18px;
+      margin: 0;
+      flex: 0 0 auto;
+      appearance: none;
+      border: 0;
+      border-radius: 9px;
+      outline: none;
+      background: var(--background-tertiary);
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+
+    input[type="checkbox"]::after {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--background);
+      content: "";
+      box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
+      transition: transform 120ms ease;
+    }
+
+    input[type="checkbox"]:checked { background: var(--brand); }
+    input[type="checkbox"]:checked::after { transform: translateX(14px); }
+
+    .quality {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    input[type="range"] {
+      width: 132px;
+      height: 4px;
+      margin: 0;
+      appearance: none;
+      border-radius: 2px;
+      background: var(--background-tertiary);
+      accent-color: var(--brand);
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      width: 14px;
+      height: 14px;
+      appearance: none;
+      border: 2px solid var(--background);
+      border-radius: 50%;
+      background: var(--brand);
+      box-shadow: 0 0 0 1px var(--brand);
+    }
+
+    input[type="range"]:disabled { opacity: 0.4; }
+
+    .quality output {
+      width: 24px;
+      color: var(--text-secondary);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    select:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    button:focus-visible { box-shadow: 0 0 0 2px var(--brand); }
+
+    .status {
+      max-height: 72px;
+      margin: 10px 0;
+      padding: 8px 10px;
+      overflow: auto;
+      border-radius: 6px;
+      background: var(--background-secondary);
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+    }
+
+    .status:empty { display: none; }
+    .status.error { color: var(--danger); }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    button {
+      height: 34px;
+      padding: 0 12px;
+      flex: 1;
+      border: 0;
+      border-radius: 6px;
+      outline: none;
+      background: var(--brand);
+      color: var(--text-on-brand);
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 120ms ease, opacity 120ms ease;
+    }
+
+    button:hover:not(:disabled) { background: var(--brand-hover); }
+
+    button.secondary {
+      background: var(--background-tertiary);
+      color: var(--text);
+    }
+
+    button.secondary:hover:not(:disabled) { background: var(--border); }
+
+    button:disabled {
+      background: var(--background-tertiary);
+      color: var(--text-disabled);
+      cursor: default;
+    }
+
+    .developer {
+      margin-top: 16px;
+      padding-top: 4px;
+      border-top: 1px solid var(--border);
+    }
+
+    .developer > .row {
+      min-height: 42px;
+      padding: 0;
+    }
+
+    .developer-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-weight: 500;
+    }
+
+    .developer-label::before {
+      color: var(--text-secondary);
+      content: "</>";
+      font: 600 10px/1 monospace;
+    }
+
     .developer-panel[hidden] { display: none; }
-    .developer-panel { margin-top: 8px; }
-    .developer-actions { display: flex; gap: 8px; margin-bottom: 8px; }
-    .developer-actions button { height: 30px; }
-    .anchor-editor { display: flex; gap: 10px; margin-bottom: 8px; }
-    .anchor-grid { display: grid; grid-template-columns: repeat(3, 26px); gap: 3px; }
-    .anchor-grid button { width: 26px; height: 26px; padding: 0; }
+
+    .developer-panel {
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    .anchor-editor {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .anchor-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 28px);
+      gap: 3px;
+    }
+
+    .anchor-grid button {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      flex: none;
+      font-size: 14px;
+    }
+
     .anchor-fields { flex: 1; }
-    .anchor-coordinates { display: flex; gap: 4px; margin-bottom: 6px; }
-    .anchor-coordinates input { width: 50%; min-width: 0; padding: 4px; }
-    .anchor-cache-actions { display: flex; gap: 4px; }
-    .anchor-cache-actions button { height: 28px; }
-    .developer-output { width: 100%; height: 190px; padding: 8px; resize: vertical; border: 1px solid #ddd; border-radius: 6px; font: 11px/1.4 monospace; }
-    .developer-status { min-height: 18px; margin-top: 4px; color: #555; }
-    .developer-status.error { color: #d92d20; }
+
+    .anchor-coordinates,
+    .anchor-cache-actions,
+    .developer-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .anchor-coordinates { margin-bottom: 6px; }
+
+    .anchor-coordinates input {
+      width: 50%;
+      min-width: 0;
+      padding: 0 8px;
+    }
+
+    .anchor-cache-actions button,
+    .developer-actions button { height: 30px; }
+
+    .developer-actions { margin-bottom: 8px; }
+
+    .developer-output {
+      width: 100%;
+      height: 154px;
+      padding: 10px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      outline: none;
+      background: var(--background-secondary);
+      color: var(--text);
+      font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .developer-status {
+      min-height: 18px;
+      margin-top: 6px;
+      color: var(--text-secondary);
+      font-size: 11px;
+    }
+
+    .developer-status.error { color: var(--danger); }
   </style>
 </head>
 <body>
-  <h2>Figma Motion to PAG</h2>
-  <div id="selection" class="selection">请选择一个节点</div>
-  <label class="row">
-    <span>导出帧率</span>
-    <select id="frame-rate">
-      <option value="24">24 fps</option>
-      <option value="30" selected>30 fps</option>
-      <option value="60">60 fps</option>
-    </select>
-  </label>
-  <label class="row">
-    <span>图片使用 WebP</span>
-    <input id="webp-enabled" type="checkbox" checked>
-  </label>
-  <label class="row">
-    <span>WebP 质量</span>
-    <span class="quality">
-      <input id="webp-quality" type="range" min="0" max="100" step="1" value="80">
-      <output id="quality-value">80</output>
-    </span>
-  </label>
-  <div id="status" class="status"></div>
-  <div class="actions">
-    <button id="export" disabled>导出 PAG</button>
-    <button id="cancel" class="secondary" disabled>取消</button>
-  </div>
-  <div class="developer">
-    <label class="row">
-      <span>开发者模式</span>
-      <input id="developer-enabled" type="checkbox">
-    </label>
-    <div id="developer-panel" class="developer-panel" hidden>
-      <div class="anchor-editor">
-        <div class="anchor-grid" id="anchor-grid">
-          <button data-x="0" data-y="0">↖</button><button data-x="0.5" data-y="0">↑</button><button data-x="1" data-y="0">↗</button>
-          <button data-x="0" data-y="0.5">←</button><button data-x="0.5" data-y="0.5">●</button><button data-x="1" data-y="0.5">→</button>
-          <button data-x="0" data-y="1">↙</button><button data-x="0.5" data-y="1">↓</button><button data-x="1" data-y="1">↘</button>
-        </div>
-        <div class="anchor-fields">
-          <div class="anchor-coordinates">
-            <input id="anchor-x" type="number" step="any" placeholder="Anchor X">
-            <input id="anchor-y" type="number" step="any" placeholder="Anchor Y">
-          </div>
-          <div class="anchor-cache-actions">
-            <button id="save-motion-anchor">保存</button>
-            <button id="clear-motion-anchor" class="secondary">清除</button>
-          </div>
-        </div>
-      </div>
-      <div class="developer-actions">
-        <button id="refresh-motion-anchor" class="secondary">刷新锚点</button>
-        <button id="refresh-debug-data" class="secondary">刷新</button>
-        <button id="copy-debug-data">复制 JSON</button>
-      </div>
-      <textarea id="developer-output" class="developer-output" readonly></textarea>
-      <div id="developer-status" class="developer-status"></div>
+  <main class="panel">
+    <header class="intro">
+      <h2>导出设置</h2>
+      <p>将选中的动效节点导出为 PAG 文件</p>
+    </header>
+    <div id="selection" class="selection">请选择一个节点</div>
+    <div class="settings">
+      <label class="row">
+        <span>导出帧率</span>
+        <select id="frame-rate">
+          <option value="24">24 fps</option>
+          <option value="30" selected>30 fps</option>
+          <option value="60">60 fps</option>
+        </select>
+      </label>
+      <label class="row">
+        <span>图片使用 WebP</span>
+        <input id="webp-enabled" type="checkbox" checked>
+      </label>
+      <label class="row">
+        <span>WebP 质量</span>
+        <span class="quality">
+          <input id="webp-quality" type="range" min="0" max="100" step="1" value="80">
+          <output id="quality-value">80</output>
+        </span>
+      </label>
     </div>
-  </div>
+    <div id="status" class="status"></div>
+    <div class="actions">
+      <button id="export" disabled>导出 PAG</button>
+      <button id="cancel" class="secondary" disabled>取消</button>
+    </div>
+    <div class="developer">
+      <label class="row">
+        <span class="developer-label">开发者模式</span>
+        <input id="developer-enabled" type="checkbox">
+      </label>
+      <div id="developer-panel" class="developer-panel" hidden>
+        <div class="anchor-editor">
+          <div class="anchor-grid" id="anchor-grid">
+            <button data-x="0" data-y="0">↖</button><button data-x="0.5" data-y="0">↑</button><button data-x="1" data-y="0">↗</button>
+            <button data-x="0" data-y="0.5">←</button><button data-x="0.5" data-y="0.5">●</button><button data-x="1" data-y="0.5">→</button>
+            <button data-x="0" data-y="1">↙</button><button data-x="0.5" data-y="1">↓</button><button data-x="1" data-y="1">↘</button>
+          </div>
+          <div class="anchor-fields">
+            <div class="anchor-coordinates">
+              <input id="anchor-x" type="number" step="any" placeholder="Anchor X">
+              <input id="anchor-y" type="number" step="any" placeholder="Anchor Y">
+            </div>
+            <div class="anchor-cache-actions">
+              <button id="save-motion-anchor">保存</button>
+              <button id="clear-motion-anchor" class="secondary">清除</button>
+            </div>
+          </div>
+        </div>
+        <div class="developer-actions">
+          <button id="refresh-motion-anchor" class="secondary">刷新锚点</button>
+          <button id="refresh-debug-data" class="secondary">刷新</button>
+          <button id="copy-debug-data">复制 JSON</button>
+        </div>
+        <textarea id="developer-output" class="developer-output" readonly></textarea>
+        <div id="developer-status" class="developer-status"></div>
+      </div>
+    </div>
+  </main>
 
   <script>
     const selection = document.getElementById('selection')

@@ -14,10 +14,10 @@ import type {
   UiMessage,
 } from './export/types'
 
-const defaultUiHeight = 430
+const defaultUiHeight = 380
 const developerUiHeight = 720
 
-figma.showUI(__html__, { width: 360, height: defaultUiHeight })
+figma.showUI(__html__, { width: 360, height: defaultUiHeight, themeColors: true })
 
 let cancelled = false
 let developerModeEnabled = false
