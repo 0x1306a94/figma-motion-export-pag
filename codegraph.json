@@ -4,5 +4,9 @@
         "libpag/src",
         "libpag/third_party/tgfx/include",
         "libpag/third_party/tgfx/src"
+    ],
+    "exclude": [
+        "libpag/include/pagx/**",
+        "libpag/src/pagx/**"
     ]
 }
