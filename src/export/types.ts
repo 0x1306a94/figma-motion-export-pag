@@ -53,10 +53,20 @@ export type PluginMessage =
   | { type: 'cancel' }
   | { type: 'set-developer-mode'; enabled: boolean }
   | { type: 'request-animation-debug-data' }
+  | { type: 'refresh-motion-anchor' }
+  | { type: 'set-motion-anchor'; x: number; y: number }
+  | { type: 'clear-motion-anchor' }
   | { type: 'webp-result'; requestId: number; bytes?: Uint8Array; error?: string }
 
 export type UiMessage =
-  | { type: 'selection-changed'; canExport: boolean; selectionName?: string }
+  | {
+      type: 'selection-changed'
+      canExport: boolean
+      selectionName?: string
+      selectionWidth?: number
+      selectionHeight?: number
+      motionAnchor?: { x: number; y: number }
+    }
   | { type: 'progress'; message: string }
   | {
       type: 'encode-webp'
@@ -68,4 +78,5 @@ export type UiMessage =
   | { type: 'error'; issues: ExportIssue[] }
   | { type: 'animation-debug-data'; data: AnimationDebugData }
   | { type: 'animation-debug-error'; message: string }
+  | { type: 'motion-anchor-result'; success: boolean; message: string; anchor?: { x: number; y: number } }
   | { type: 'complete'; bytes: Uint8Array; fileName: string; warnings: ExportIssue[] }

@@ -70,29 +70,26 @@ export function readSolidNode(
   }
 }
 
-export function createExportTransformContext(root: FrameNode): ExportTransformContext {
+export function createExportTransformContext(root: SceneNode): ExportTransformContext {
   const bounds = root.absoluteBoundingBox
   if (bounds === null) {
-    throw new ExportError([{ nodeId: root.id, nodeName: root.name, message: '无法读取所选 Frame 的边界。' }])
+    throw new ExportError([{ nodeId: root.id, nodeName: root.name, message: '无法读取所选节点的边界。' }])
   }
   const transform = root.absoluteTransform
   const scaleX = Math.hypot(transform[0][0], transform[1][0])
   const scaleY = Math.hypot(transform[0][1], transform[1][1])
   const dotProduct = transform[0][0] * transform[0][1] + transform[1][0] * transform[1][1]
   const rotation = Math.atan2(transform[1][0], transform[0][0])
-  const quarterTurn = Math.round(rotation / (Math.PI / 2)) * (Math.PI / 2)
   if (
     scaleX === 0 ||
     scaleY === 0 ||
-    Math.abs(dotProduct / (scaleX * scaleY)) > 0.0001 ||
-    Math.abs(scaleX - scaleY) / Math.max(scaleX, scaleY) > 0.0001 ||
-    Math.abs(rotation - quarterTurn) > 0.0001
+    Math.abs(dotProduct / (scaleX * scaleY)) > 0.0001
   ) {
     throw new ExportError([
       {
         nodeId: root.id,
         nodeName: root.name,
-        message: '当前版本仅支持等比缩放及 90° 倍数旋转或翻转的顶层 Frame。',
+        message: '所选根节点不能包含倾斜或退化变换。',
       },
     ])
   }
@@ -109,7 +106,7 @@ export function createExportTransformContext(root: FrameNode): ExportTransformCo
     rootToExportTransform: multiplyTransform(absoluteToExportTransform, transform),
     scale: scaleX,
     orientation: determinant < 0 ? -1 : 1,
-    rotation: (quarterTurn * 180) / Math.PI,
+    rotation: (rotation * 180) / Math.PI,
   }
 }
 
@@ -132,7 +129,7 @@ export function readNodeTransform(node: SceneNode, context: ExportTransformConte
   }
 }
 
-function multiplyTransform(left: Transform, right: Transform): Transform {
+export function multiplyTransform(left: Transform, right: Transform): Transform {
   return [
     [
       left[0][0] * right[0][0] + left[0][1] * right[1][0],

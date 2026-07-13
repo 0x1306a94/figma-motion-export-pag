@@ -23,6 +23,14 @@
     .developer-panel { margin-top: 8px; }
     .developer-actions { display: flex; gap: 8px; margin-bottom: 8px; }
     .developer-actions button { height: 30px; }
+    .anchor-editor { display: flex; gap: 10px; margin-bottom: 8px; }
+    .anchor-grid { display: grid; grid-template-columns: repeat(3, 26px); gap: 3px; }
+    .anchor-grid button { width: 26px; height: 26px; padding: 0; }
+    .anchor-fields { flex: 1; }
+    .anchor-coordinates { display: flex; gap: 4px; margin-bottom: 6px; }
+    .anchor-coordinates input { width: 50%; min-width: 0; padding: 4px; }
+    .anchor-cache-actions { display: flex; gap: 4px; }
+    .anchor-cache-actions button { height: 28px; }
     .developer-output { width: 100%; height: 190px; padding: 8px; resize: vertical; border: 1px solid #ddd; border-radius: 6px; font: 11px/1.4 monospace; }
     .developer-status { min-height: 18px; margin-top: 4px; color: #555; }
     .developer-status.error { color: #d92d20; }
@@ -30,7 +38,7 @@
 </head>
 <body>
   <h2>Figma Motion to PAG</h2>
-  <div id="selection" class="selection">请选择一个顶层 Frame</div>
+  <div id="selection" class="selection">请选择一个节点</div>
   <label class="row">
     <span>导出帧率</span>
     <select id="frame-rate">
@@ -61,7 +69,25 @@
       <input id="developer-enabled" type="checkbox">
     </label>
     <div id="developer-panel" class="developer-panel" hidden>
+      <div class="anchor-editor">
+        <div class="anchor-grid" id="anchor-grid">
+          <button data-x="0" data-y="0">↖</button><button data-x="0.5" data-y="0">↑</button><button data-x="1" data-y="0">↗</button>
+          <button data-x="0" data-y="0.5">←</button><button data-x="0.5" data-y="0.5">●</button><button data-x="1" data-y="0.5">→</button>
+          <button data-x="0" data-y="1">↙</button><button data-x="0.5" data-y="1">↓</button><button data-x="1" data-y="1">↘</button>
+        </div>
+        <div class="anchor-fields">
+          <div class="anchor-coordinates">
+            <input id="anchor-x" type="number" step="any" placeholder="Anchor X">
+            <input id="anchor-y" type="number" step="any" placeholder="Anchor Y">
+          </div>
+          <div class="anchor-cache-actions">
+            <button id="save-motion-anchor">保存</button>
+            <button id="clear-motion-anchor" class="secondary">清除</button>
+          </div>
+        </div>
+      </div>
       <div class="developer-actions">
+        <button id="refresh-motion-anchor" class="secondary">刷新锚点</button>
         <button id="refresh-debug-data" class="secondary">刷新</button>
         <button id="copy-debug-data">复制 JSON</button>
       </div>
@@ -82,11 +108,19 @@
     const developerEnabled = document.getElementById('developer-enabled')
     const developerPanel = document.getElementById('developer-panel')
     const refreshDebugDataButton = document.getElementById('refresh-debug-data')
+    const refreshMotionAnchorButton = document.getElementById('refresh-motion-anchor')
+    const anchorGrid = document.getElementById('anchor-grid')
+    const anchorX = document.getElementById('anchor-x')
+    const anchorY = document.getElementById('anchor-y')
+    const saveMotionAnchorButton = document.getElementById('save-motion-anchor')
+    const clearMotionAnchorButton = document.getElementById('clear-motion-anchor')
     const copyDebugDataButton = document.getElementById('copy-debug-data')
     const developerOutput = document.getElementById('developer-output')
     const developerStatus = document.getElementById('developer-status')
     let canExport = false
     let exporting = false
+    let selectionWidth = 0
+    let selectionHeight = 0
 
     webpEnabled.onchange = () => {
       webpQuality.disabled = !webpEnabled.checked
@@ -124,6 +158,27 @@
     refreshDebugDataButton.onclick = () => {
       requestAnimationDebugData()
     }
+    refreshMotionAnchorButton.onclick = () => {
+      developerStatus.className = 'developer-status'
+      developerStatus.textContent = '正在推导锚点…'
+      parent.postMessage({ pluginMessage: { type: 'refresh-motion-anchor' } }, '*')
+    }
+    anchorGrid.onclick = (event) => {
+      const button = event.target.closest('button')
+      if (!button || selectionWidth <= 0 || selectionHeight <= 0) return
+      setMotionAnchor(Number(button.dataset.x) * selectionWidth, Number(button.dataset.y) * selectionHeight)
+    }
+    saveMotionAnchorButton.onclick = () => {
+      if (anchorX.value === '' || anchorY.value === '') {
+        developerStatus.className = 'developer-status error'
+        developerStatus.textContent = '请输入完整的 Anchor X/Y。'
+        return
+      }
+      setMotionAnchor(Number(anchorX.value), Number(anchorY.value))
+    }
+    clearMotionAnchorButton.onclick = () => {
+      parent.postMessage({ pluginMessage: { type: 'clear-motion-anchor' } }, '*')
+    }
     copyDebugDataButton.onclick = async () => {
       if (developerOutput.value === '') return
       try {
@@ -140,7 +195,10 @@
       const message = event.data.pluginMessage
       if (message.type === 'selection-changed') {
         canExport = message.canExport
-        selection.textContent = message.canExport ? `已选择：${message.selectionName}` : '请选择一个顶层 Frame'
+        selectionWidth = message.selectionWidth || 0
+        selectionHeight = message.selectionHeight || 0
+        showMotionAnchor(message.motionAnchor)
+        selection.textContent = message.canExport ? `已选择：${message.selectionName}` : '请选择一个节点'
         exportButton.disabled = exporting || !canExport
       } else if (message.type === 'progress') {
         status.className = 'status'
@@ -173,6 +231,10 @@
         developerOutput.value = ''
         developerStatus.className = 'developer-status error'
         developerStatus.textContent = message.message
+      } else if (message.type === 'motion-anchor-result') {
+        developerStatus.className = message.success ? 'developer-status' : 'developer-status error'
+        developerStatus.textContent = message.message
+        if (message.success) showMotionAnchor(message.anchor)
       }
     }
 
@@ -180,6 +242,20 @@
       developerStatus.className = 'developer-status'
       developerStatus.textContent = '正在读取动画数据…'
       parent.postMessage({ pluginMessage: { type: 'request-animation-debug-data' } }, '*')
+    }
+
+    function setMotionAnchor(x, y) {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        developerStatus.className = 'developer-status error'
+        developerStatus.textContent = '锚点坐标必须是有效数字。'
+        return
+      }
+      parent.postMessage({ pluginMessage: { type: 'set-motion-anchor', x, y } }, '*')
+    }
+
+    function showMotionAnchor(anchor) {
+      anchorX.value = anchor ? anchor.x : ''
+      anchorY.value = anchor ? anchor.y : ''
     }
 
     function setExporting(value) {

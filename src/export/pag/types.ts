@@ -36,16 +36,27 @@ export interface PagTransform {
 
 export interface PagLayerBase {
   id: number
+  active?: boolean
   name: string
   startTime: number
   duration: number
   transform: PagTransform
   masks?: PagMask[]
+  trackMatteType?: PagTrackMatteType
 }
+
+export type PagTrackMatteType = 'alpha' | 'alpha-inverted' | 'luma' | 'luma-inverted'
+
+export type PagMaskMode = 'none' | 'add' | 'subtract' | 'intersect' | 'lighten' | 'darken' | 'difference' | 'accum'
 
 export interface PagMask {
   id: number
-  commands: PagPathCommand[]
+  commands: PagProperty<PagPathCommand[]>
+  inverted?: boolean
+  mode?: PagMaskMode
+  feather?: PagProperty<PagPoint>
+  opacity?: PagProperty<number>
+  expansion?: PagProperty<number>
 }
 
 export interface PagSolidLayer extends PagLayerBase {

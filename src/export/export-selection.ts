@@ -1,7 +1,7 @@
 import { encodePagFile } from './pag/encode-file'
 import type { PagImage, PagLayer, PagSolidLayer } from './pag/types'
 import { readImageNode } from './image'
-import { readMotionTransform } from './motion'
+import { composeAncestorMotionTransform, readMotionTransform } from './motion'
 import { readShapeNode } from './shape'
 import {
   createExportTransformContext,
@@ -12,6 +12,8 @@ import {
 } from './solid'
 import { ExportError } from './types'
 import type { ExportOptions } from './types'
+import { readMaskMatte } from './mask'
+import type { FigmaMaskNode } from './mask'
 
 export interface ExportResult {
   bytes: Uint8Array
@@ -24,16 +26,10 @@ export async function exportSelection(
   options: ExportOptions,
   encodeWebP: (source: Uint8Array, mimeType: string, quality: number) => Promise<Uint8Array>,
 ): Promise<ExportResult> {
-  if (selection.length !== 1 || selection[0].type !== 'FRAME') {
-    throw new ExportError([{ message: '请选择一个顶层 Frame 后再导出。' }])
+  if (selection.length !== 1) {
+    throw new ExportError([{ message: '请选择一个节点后再导出。' }])
   }
   const root = selection[0]
-  if (root.parent?.type !== 'PAGE') {
-    throw new ExportError([{ nodeId: root.id, nodeName: root.name, message: '请选择顶层 Frame。' }])
-  }
-  if (Object.keys(root.animations).length > 0) {
-    throw new ExportError([{ nodeId: root.id, nodeName: root.name, message: '顶层 Frame 不能包含 Motion。' }])
-  }
   const durationSeconds = root.timelines[0]?.duration ?? 1 / options.frameRate
   const duration = Math.max(1, Math.round(durationSeconds * options.frameRate))
   const transformContext = createExportTransformContext(root)
@@ -43,7 +39,53 @@ export async function exportSelection(
   let nextId = 2
   let nextImageId = 1
 
-  const visit = async (node: SceneNode): Promise<void> => {
+  interface ActiveMask {
+    node: FigmaMaskNode
+    ancestors: SceneNode[]
+  }
+
+  const appendLayer = async (
+    node: SceneNode,
+    ancestors: SceneNode[],
+    layer: PagLayer,
+    mask: ActiveMask | undefined,
+  ): Promise<void> => {
+    layer.transform = composeAncestorMotionTransform(
+      node,
+      root,
+      ancestors,
+      options.frameRate,
+      duration,
+      layer.transform,
+      warnings,
+      transformContext,
+    )
+    layers.push(layer)
+    if (mask === undefined) return
+    const matte = await readMaskMatte(mask.node, nextId++, {
+      root,
+      duration,
+      options,
+      transformContext,
+      warnings,
+      imagesByHash,
+      nextImageId: () => nextImageId++,
+    })
+    matte.layer.transform = composeAncestorMotionTransform(
+      mask.node,
+      root,
+      mask.ancestors,
+      options.frameRate,
+      duration,
+      matte.layer.transform,
+      warnings,
+      transformContext,
+    )
+    layer.trackMatteType = matte.type
+    layers.push(matte.layer)
+  }
+
+  const visit = async (node: SceneNode, ancestors: SceneNode[], mask?: ActiveMask): Promise<void> => {
     if (!node.visible) return
     validateLayerNode(node)
     const solid = readSolidNode(node, nextId, duration, transformContext)
@@ -58,7 +100,7 @@ export async function exportSelection(
         readPaintOpacity(node),
       )
       nextId += 1
-      layers.push(solid)
+      await appendLayer(node, ancestors, solid, mask)
       return
     }
     const nodeTransform = readNodeTransform(node, transformContext)
@@ -80,7 +122,7 @@ export async function exportSelection(
         readPaintOpacity(node),
       )
       nextId += 1
-      layers.push(image)
+      await appendLayer(node, ancestors, image, mask)
       return
     }
     const shape = readShapeNode(node, nextId, duration, nodeTransform)
@@ -94,20 +136,21 @@ export async function exportSelection(
         transformContext,
       )
       nextId += 1
-      layers.push(shape)
+      await appendLayer(node, ancestors, shape, mask)
       return
     }
     if ('children' in node) {
-      if (Object.keys(node.animations).length > 0) {
-        throw new ExportError([
-          {
-            nodeId: node.id,
-            nodeName: node.name,
-            message: '当前版本不支持容器图层使用 Motion。',
-          },
-        ])
+      let activeMask = mask
+      const childAncestors = [...ancestors, node]
+      for (const child of node.children) {
+        if ('isMask' in child && child.isMask) {
+          activeMask = child.visible
+            ? { node: child as FigmaMaskNode, ancestors: childAncestors }
+            : undefined
+          continue
+        }
+        await visit(child, childAncestors, activeMask)
       }
-      for (const child of node.children) await visit(child)
       return
     }
     if (hasSolidMarker(node.name)) return
@@ -120,17 +163,33 @@ export async function exportSelection(
     ])
   }
 
-  for (const child of root.children) await visit(child)
+  if ('children' in root) {
+    let activeMask: ActiveMask | undefined
+    for (const child of root.children) {
+      if ('isMask' in child && child.isMask) {
+        activeMask = child.visible
+          ? { node: child as FigmaMaskNode, ancestors: [] }
+          : undefined
+        continue
+      }
+      await visit(child, [], activeMask)
+    }
+  } else {
+    await visit(root, [])
+  }
   layers.reverse()
-  const background = readRootBackgroundLayer(
-    root,
-    nextId,
-    duration,
-    transformContext.width,
-    transformContext.height,
-  )
+  const background =
+    root.type === 'FRAME'
+      ? readRootBackgroundLayer(
+          root,
+          nextId,
+          duration,
+          transformContext.width,
+          transformContext.height,
+        )
+      : null
   if (background !== null) layers.push(background)
-  if (layers.length === 0) throw new ExportError([{ message: '所选 Frame 中没有可导出的图层。' }])
+  if (layers.length === 0) throw new ExportError([{ message: '所选节点中没有可导出的图层。' }])
 
   const bytes = encodePagFile({
     id: 1,
@@ -193,11 +252,6 @@ function validateLayerNode(node: SceneNode): void {
   if ('blendMode' in node && node.blendMode !== 'NORMAL' && node.blendMode !== 'PASS_THROUGH') {
     throw new ExportError([
       { nodeId: node.id, nodeName: node.name, message: `当前版本不支持 ${node.blendMode} 混合模式。` },
-    ])
-  }
-  if ('isMask' in node && node.isMask) {
-    throw new ExportError([
-      { nodeId: node.id, nodeName: node.name, message: '当前版本不支持 Figma Mask。' },
     ])
   }
 }

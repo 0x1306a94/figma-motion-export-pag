@@ -8,6 +8,23 @@ import type {
 import type { ExportIssue } from './types'
 import { ExportError } from './types'
 import type { ExportTransformContext } from './solid'
+import { multiplyTransform, readNodeTransform } from './solid'
+
+interface NodeMotionContext {
+  parentToExportTransform: Transform
+  scaleX: number
+  scaleY: number
+  orientation: 1 | -1
+  rotation: number
+}
+
+export interface MotionAnchor {
+  x: number
+  y: number
+}
+
+const motionAnchorNamespace = 'pagx'
+const motionAnchorKey = 'anchor'
 
 const supportedFields = new Set([
   'OPACITY',
@@ -54,7 +71,7 @@ const pointMath: ValueMath<PagPoint> = {
 
 export function readMotionTransform(
   node: SceneNode,
-  root: FrameNode,
+  _root: SceneNode,
   frameRate: number,
   transform: PagTransform,
   warnings: ExportIssue[],
@@ -67,7 +84,7 @@ export function readMotionTransform(
   const unsupported = animationFields.filter((field) => !supportedFields.has(field))
   if (unsupported.length > 0) fail(node, `当前版本不支持 Motion 属性：${unsupported.join('、')}。`)
   if (animationFields.length === 0) return transform
-  if (node.parent !== root) fail(node, '当前版本仅支持顶层 Frame 的直接子图层使用 Motion。')
+  const nodeContext = createNodeMotionContext(node, context)
 
   const result = { ...transform }
   const positionXY = readPointBinding(node, 'TRANSLATION_XY', frameRate, warnings)
@@ -82,7 +99,7 @@ export function readMotionTransform(
       y: node.relativeTransform[1][2],
     }
     result.position = mapPointProperty(positionXY, (point) =>
-      mapPosition({ x: staticPosition.x + point.x, y: staticPosition.y + point.y }, context),
+      mapPosition({ x: staticPosition.x + point.x, y: staticPosition.y + point.y }, nodeContext),
     )
     result.xPosition = undefined
     result.yPosition = undefined
@@ -94,16 +111,16 @@ export function readMotionTransform(
     const mappedPosition = mapSeparatedPosition(
       positionX ?? staticPosition.x,
       positionY ?? staticPosition.y,
-      context,
+      nodeContext,
     )
-    result.position = undefined
+    result.position = mappedPosition.position
     result.xPosition = mappedPosition.x
     result.yPosition = mappedPosition.y
   }
 
   const rotation = readNumberBinding(node, 'ROTATION', frameRate, warnings)
   if (rotation !== undefined) {
-    result.rotation = mapNumberProperty(rotation, -context.orientation, context.rotation)
+    result.rotation = mapNumberProperty(rotation, -nodeContext.orientation, nodeContext.rotation)
   }
   const opacity = readNumberBinding(
     node,
@@ -121,8 +138,8 @@ export function readMotionTransform(
   const scaleX = readNumberBinding(node, 'SCALE_X', frameRate, warnings)
   const scaleY = readNumberBinding(node, 'SCALE_Y', frameRate, warnings)
   const staticScale = getStaticPoint(transform.scale, {
-    x: context.scale,
-    y: context.scale * context.orientation,
+    x: nodeContext.scaleX,
+    y: nodeContext.scaleY * nodeContext.orientation,
   })
   const width = readSizeBinding(
     node,
@@ -160,23 +177,23 @@ export function readMotionTransform(
     result.scale = numberToPointProperty(height, staticScale.x, false)
   } else if (scaleXY !== undefined) {
     result.scale = mapPointProperty(scaleXY, (point) => ({
-      x: point.x * context.scale,
-      y: point.y * context.scale * context.orientation,
+      x: point.x * nodeContext.scaleX,
+      y: point.y * nodeContext.scaleY * nodeContext.orientation,
     }))
   } else if (scaleX !== undefined && scaleY !== undefined) {
     result.scale = combineNumberProperties(
-      mapNumberProperty(scaleX, context.scale, 0),
-      mapNumberProperty(scaleY, context.scale * context.orientation, 0),
+      mapNumberProperty(scaleX, nodeContext.scaleX, 0),
+      mapNumberProperty(scaleY, nodeContext.scaleY * nodeContext.orientation, 0),
     )
   } else if (scaleX !== undefined) {
     result.scale = numberToPointProperty(
-      mapNumberProperty(scaleX, context.scale, 0),
+      mapNumberProperty(scaleX, nodeContext.scaleX, 0),
       staticScale.y,
       true,
     )
   } else if (scaleY !== undefined) {
     result.scale = numberToPointProperty(
-      mapNumberProperty(scaleY, context.scale * context.orientation, 0),
+      mapNumberProperty(scaleY, nodeContext.scaleY * nodeContext.orientation, 0),
       staticScale.x,
       false,
     )
@@ -187,46 +204,299 @@ export function readMotionTransform(
     scaleX !== undefined ||
     scaleY !== undefined
   ) {
-    applyCenterAnchor(node, result, context)
+    applyMotionAnchor(node, result, nodeContext)
   }
   return result
 }
 
-function applyCenterAnchor(
+function createNodeMotionContext(
+  node: SceneNode,
+  context: ExportTransformContext,
+): NodeMotionContext {
+  const parent = node.parent
+  const transform =
+    parent !== null && 'absoluteTransform' in parent
+      ? multiplyTransform(context.absoluteToExportTransform, parent.absoluteTransform)
+      : context.rootToExportTransform
+  const scaleX = Math.hypot(transform[0][0], transform[1][0])
+  const scaleY = Math.hypot(transform[0][1], transform[1][1])
+  const determinant =
+    transform[0][0] * transform[1][1] - transform[0][1] * transform[1][0]
+  return {
+    parentToExportTransform: transform,
+    scaleX,
+    scaleY,
+    orientation: determinant < 0 ? -1 : 1,
+    rotation: (Math.atan2(transform[1][0], transform[0][0]) * 180) / Math.PI,
+  }
+}
+
+export function composeAncestorMotionTransform(
+  node: SceneNode,
+  root: SceneNode,
+  ancestors: readonly SceneNode[],
+  frameRate: number,
+  duration: number,
+  transform: PagTransform,
+  warnings: ExportIssue[],
+  context: ExportTransformContext,
+): PagTransform {
+  if (!ancestors.some((ancestor) => hasMotion(ancestor) || readOpacity(ancestor) !== 1)) {
+    return transform
+  }
+  const nodes = [...ancestors, node]
+  const transforms = nodes.map((item, index) => {
+    if (index === nodes.length - 1) return transform
+    const base = {
+      ...readNodeTransform(item, context),
+      opacity: readOpacity(item) * 255,
+    }
+    return readMotionTransform(item, root, frameRate, base, warnings, context)
+  })
+  const positions: PagPoint[] = []
+  const scales: PagPoint[] = []
+  const rotations: number[] = []
+  const opacities: number[] = []
+  for (let frame = 0; frame <= duration; frame += 1) {
+    let world = context.rootToExportTransform
+    let opacity = 1
+    for (let index = 0; index < nodes.length; index += 1) {
+      const item = nodes[index]
+      const parent = item.parent
+      const parentWorld =
+        parent === root || parent === null || !('absoluteTransform' in parent)
+          ? context.rootToExportTransform
+          : multiplyTransform(context.absoluteToExportTransform, parent.absoluteTransform)
+      const local = multiplyTransform(invertTransform(parentWorld, item), readTransformAt(transforms[index], frame))
+      world = multiplyTransform(world, local)
+      opacity *= readNumberAt(transforms[index].opacity ?? 255, frame) / 255
+    }
+    const value = decomposeTransform(world, node)
+    positions.push(value.position)
+    scales.push(value.scale)
+    rotations.push(unwrapRotation(rotations[rotations.length - 1], value.rotation))
+    opacities.push(opacity * 255)
+  }
+  return {
+    position: makeSampledProperty(positions, pointMath),
+    scale: makeSampledProperty(scales, pointMath),
+    rotation: makeSampledProperty(rotations, numberMath),
+    opacity: makeSampledProperty(opacities, numberMath),
+  }
+}
+
+function hasMotion(node: SceneNode): boolean {
+  return Object.keys(node.animations).some(
+    (field) => node.animations[field as KeyframePropertyFieldName] !== undefined,
+  )
+}
+
+function readOpacity(node: SceneNode): number {
+  return 'opacity' in node ? node.opacity : 1
+}
+
+function readTransformAt(transform: PagTransform, frame: number): Transform {
+  const position = transform.position === undefined
+    ? {
+        x: readNumberAt(transform.xPosition ?? 0, frame),
+        y: readNumberAt(transform.yPosition ?? 0, frame),
+      }
+    : readPointAt(transform.position, frame)
+  const anchor = readPointAt(transform.anchorPoint ?? { x: 0, y: 0 }, frame)
+  const scale = readPointAt(transform.scale ?? { x: 1, y: 1 }, frame)
+  const rotation = (readNumberAt(transform.rotation ?? 0, frame) * Math.PI) / 180
+  const cosine = Math.cos(rotation)
+  const sine = Math.sin(rotation)
+  const a = cosine * scale.x
+  const b = -sine * scale.y
+  const c = sine * scale.x
+  const d = cosine * scale.y
+  return [
+    [a, b, position.x - a * anchor.x - b * anchor.y],
+    [c, d, position.y - c * anchor.x - d * anchor.y],
+  ]
+}
+
+function invertTransform(transform: Transform, node: SceneNode): Transform {
+  const determinant =
+    transform[0][0] * transform[1][1] - transform[0][1] * transform[1][0]
+  if (Math.abs(determinant) < 0.000001) fail(node, 'Motion 父级包含退化变换。')
+  const a = transform[1][1] / determinant
+  const b = -transform[0][1] / determinant
+  const c = -transform[1][0] / determinant
+  const d = transform[0][0] / determinant
+  return [
+    [a, b, -a * transform[0][2] - b * transform[1][2]],
+    [c, d, -c * transform[0][2] - d * transform[1][2]],
+  ]
+}
+
+function decomposeTransform(
+  transform: Transform,
+  node: SceneNode,
+): { position: PagPoint; scale: PagPoint; rotation: number } {
+  const scaleX = Math.hypot(transform[0][0], transform[1][0])
+  const scaleYLength = Math.hypot(transform[0][1], transform[1][1])
+  const dotProduct = transform[0][0] * transform[0][1] + transform[1][0] * transform[1][1]
+  if (scaleX < 0.000001 || scaleYLength < 0.000001 || Math.abs(dotProduct / (scaleX * scaleYLength)) > 0.0001) {
+    fail(node, '父子 Motion 合成后产生 PAG Transform2D 无法表达的倾斜或退化变换。')
+  }
+  const determinant =
+    transform[0][0] * transform[1][1] - transform[0][1] * transform[1][0]
+  return {
+    position: { x: transform[0][2], y: transform[1][2] },
+    scale: { x: scaleX, y: determinant < 0 ? -scaleYLength : scaleYLength },
+    rotation: (Math.atan2(transform[1][0], transform[0][0]) * 180) / Math.PI,
+  }
+}
+
+function unwrapRotation(previous: number | undefined, value: number): number {
+  if (previous === undefined) return value
+  let result = value
+  while (result - previous > 180) result -= 360
+  while (result - previous < -180) result += 360
+  return result
+}
+
+function makeSampledProperty<T>(values: T[], math: ValueMath<T>): PagProperty<T> {
+  if (values.every((value) => math.equals(value, values[0]))) return values[0]
+  return {
+    keyframes: values.slice(0, -1).map((value, frame) => ({
+      startTime: frame,
+      endTime: frame + 1,
+      startValue: value,
+      endValue: values[frame + 1],
+      interpolation: 1,
+    })),
+  }
+}
+
+function applyMotionAnchor(
   node: SceneNode,
   transform: PagTransform,
-  context: ExportTransformContext,
+  context: NodeMotionContext,
 ): void {
-  const anchor = { x: node.width / 2, y: node.height / 2 }
+  const anchor = readMotionAnchor(node)
   const nodeTransform = node.relativeTransform
-  const centerInRoot = {
+  const anchorInRoot = {
     x: nodeTransform[0][0] * anchor.x + nodeTransform[0][1] * anchor.y,
     y: nodeTransform[1][0] * anchor.x + nodeTransform[1][1] * anchor.y,
   }
-  const rootTransform = context.rootToExportTransform
-  const centerInExport = {
-    x: rootTransform[0][0] * centerInRoot.x + rootTransform[0][1] * centerInRoot.y,
-    y: rootTransform[1][0] * centerInRoot.x + rootTransform[1][1] * centerInRoot.y,
+  const rootTransform = context.parentToExportTransform
+  const anchorInExport = {
+    x: rootTransform[0][0] * anchorInRoot.x + rootTransform[0][1] * anchorInRoot.y,
+    y: rootTransform[1][0] * anchorInRoot.x + rootTransform[1][1] * anchorInRoot.y,
   }
 
   transform.anchorPoint = anchor
   if (transform.position !== undefined) {
     transform.position = mapPointProperty(transform.position, (position) => ({
-      x: position.x + centerInExport.x,
-      y: position.y + centerInExport.y,
+      x: position.x + anchorInExport.x,
+      y: position.y + anchorInExport.y,
     }))
     return
   }
   if (transform.xPosition !== undefined) {
-    transform.xPosition = mapNumberProperty(transform.xPosition, 1, centerInExport.x)
+    transform.xPosition = mapNumberProperty(transform.xPosition, 1, anchorInExport.x)
   }
   if (transform.yPosition !== undefined) {
-    transform.yPosition = mapNumberProperty(transform.yPosition, 1, centerInExport.y)
+    transform.yPosition = mapNumberProperty(transform.yPosition, 1, anchorInExport.y)
   }
 }
 
-function mapPosition(point: PagPoint, context: ExportTransformContext): PagPoint {
-  const transform = context.rootToExportTransform
+export function readMotionAnchor(node: SceneNode): MotionAnchor {
+  return readCachedMotionAnchor(node) ?? { x: node.width / 2, y: node.height / 2 }
+}
+
+export function refreshMotionAnchorCache(node: SceneNode): MotionAnchor | null {
+  const anchor = inferScaleMotionAnchor(node)
+  if (anchor !== null) setMotionAnchorCache(node, anchor)
+  return anchor
+}
+
+export function readCachedMotionAnchor(node: SceneNode): MotionAnchor | null {
+  if (!('getSharedPluginData' in node)) return null
+  const value = node.getSharedPluginData(motionAnchorNamespace, motionAnchorKey)
+  const [xText, yText] = value.split(',')
+  const x = Number(xText)
+  const y = Number(yText)
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null
+}
+
+export function setMotionAnchorCache(node: SceneNode, anchor: MotionAnchor): void {
+  if (!('setSharedPluginData' in node)) return
+  node.setSharedPluginData(
+    motionAnchorNamespace,
+    motionAnchorKey,
+    `${roundMotionValue(anchor.x)},${roundMotionValue(anchor.y)}`,
+  )
+}
+
+export function clearMotionAnchorCache(node: SceneNode): void {
+  if (!('setSharedPluginData' in node)) return
+  node.setSharedPluginData(motionAnchorNamespace, motionAnchorKey, '')
+}
+
+function inferScaleMotionAnchor(node: SceneNode): MotionAnchor | null {
+  const scale = node.animations.SCALE_XY
+  const transformFields = [
+    'TRANSLATION_X',
+    'TRANSLATION_Y',
+    'TRANSLATION_XY',
+    'ROTATION',
+    'SCALE_X',
+    'SCALE_Y',
+  ] as const
+  if (
+    scale === undefined ||
+    scale.tracks.length === 0 ||
+    !scale.tracks.every((track) => track.keyframeOperation === 'SET') ||
+    transformFields.some((field) => node.animations[field] !== undefined) ||
+    !('absoluteBoundingBox' in node) ||
+    !('absoluteRenderBounds' in node) ||
+    node.absoluteBoundingBox === null ||
+    node.absoluteRenderBounds === null ||
+    node.absoluteBoundingBox.width <= 0 ||
+    node.absoluteBoundingBox.height <= 0
+  ) {
+    return null
+  }
+
+  const bounds = node.absoluteBoundingBox
+  const renderBounds = node.absoluteRenderBounds
+  const scaleX = renderBounds.width / bounds.width
+  const scaleY = renderBounds.height / bounds.height
+  if (
+    !Number.isFinite(scaleX) ||
+    !Number.isFinite(scaleY) ||
+    (Math.abs(scaleX - 1) < 0.001 && Math.abs(scaleY - 1) < 0.001)
+  ) {
+    return null
+  }
+
+  const x = (renderBounds.x - bounds.x) / (1 - scaleX)
+  const y = (renderBounds.y - bounds.y) / (1 - scaleY)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+  return {
+    x: snapMotionAnchor(x, node.width),
+    y: snapMotionAnchor(y, node.height),
+  }
+}
+
+function snapMotionAnchor(value: number, size: number): number {
+  const tolerance = Math.max(1, size * 0.03)
+  for (const candidate of [0, size / 2, size]) {
+    if (Math.abs(value - candidate) <= tolerance) return roundMotionValue(candidate)
+  }
+  return roundMotionValue(value)
+}
+
+function roundMotionValue(value: number): number {
+  return Math.round(value * 10000) / 10000
+}
+
+function mapPosition(point: PagPoint, context: NodeMotionContext): PagPoint {
+  const transform = context.parentToExportTransform
   return {
     x: transform[0][0] * point.x + transform[0][1] * point.y + transform[0][2],
     y: transform[1][0] * point.x + transform[1][1] * point.y + transform[1][2],
@@ -236,9 +506,17 @@ function mapPosition(point: PagPoint, context: ExportTransformContext): PagPoint
 function mapSeparatedPosition(
   x: PagProperty<number>,
   y: PagProperty<number>,
-  context: ExportTransformContext,
-): { x: PagProperty<number>; y: PagProperty<number> } {
-  const transform = context.rootToExportTransform
+  context: NodeMotionContext,
+): { position?: PagProperty<PagPoint>; x?: PagProperty<number>; y?: PagProperty<number> } {
+  const transform = context.parentToExportTransform
+  const axisAligned =
+    (Math.abs(transform[0][1]) < 0.0001 && Math.abs(transform[1][0]) < 0.0001) ||
+    (Math.abs(transform[0][0]) < 0.0001 && Math.abs(transform[1][1]) < 0.0001)
+  if (!axisAligned) {
+    return {
+      position: mapPointProperty(combineNumberProperties(x, y), (point) => mapPosition(point, context)),
+    }
+  }
   return {
     x: mapAxisProperty(x, y, transform[0][0], transform[0][1], transform[0][2]),
     y: mapAxisProperty(x, y, transform[1][0], transform[1][1], transform[1][2]),
@@ -333,6 +611,41 @@ function evaluateNumberProperty(property: PagProperty<number>, frame: number): n
       keyframe.endValue,
       evaluateCubicBezier(progress, curve.out.x, curve.out.y, curve.in.x, curve.in.y),
     )
+  }
+  return value
+}
+
+function readNumberAt(property: PagProperty<number>, frame: number): number {
+  return evaluateProperty(property, frame, numberMath)
+}
+
+function readPointAt(property: PagProperty<PagPoint>, frame: number): PagPoint {
+  return evaluateProperty(property, frame, pointMath)
+}
+
+function evaluateProperty<T>(property: PagProperty<T>, frame: number, math: ValueMath<T>): T {
+  if (!isAnimated(property) || property.keyframes.length === 0) return property as T
+  let value = property.keyframes[0].startValue
+  for (const keyframe of property.keyframes) {
+    if (frame < keyframe.startTime) return value
+    if (frame > keyframe.endTime) {
+      value = keyframe.endValue
+      continue
+    }
+    if (frame === keyframe.endTime) return keyframe.endValue
+    if (keyframe.interpolation === 3) return keyframe.startValue
+    const progress = (frame - keyframe.startTime) / (keyframe.endTime - keyframe.startTime)
+    const eased =
+      keyframe.interpolation === 2 && keyframe.bezier !== undefined
+        ? evaluateCubicBezier(
+            progress,
+            keyframe.bezier[0].out.x,
+            keyframe.bezier[0].out.y,
+            keyframe.bezier[0].in.x,
+            keyframe.bezier[0].in.y,
+          )
+        : progress
+    return math.interpolate(keyframe.startValue, keyframe.endValue, eased)
   }
   return value
 }

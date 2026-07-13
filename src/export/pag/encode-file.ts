@@ -19,6 +19,7 @@ const enum TagCode {
   SolidColor = 7,
   Transform2D = 13,
   MaskBlock = 14,
+  MaskBlockV2 = 84,
   ImageReference = 11,
   Rectangle = 16,
   Ellipse = 17,
@@ -96,17 +97,19 @@ function writeLayer(stream: EncodeStream, layer: PagLayer): void {
 }
 
 function writeMask(stream: EncodeStream, mask: import('./types').PagMask): void {
-  writeTag(stream, TagCode.MaskBlock, (content) => {
+  writeTag(stream, mask.feather === undefined ? TagCode.MaskBlock : TagCode.MaskBlockV2, (content) => {
     const flags = new EncodeStream()
     const values = new EncodeStream()
     values.writeEncodedUint(mask.id)
-    flags.writeBit(false)
-    flags.writeBit(false)
-    flags.writeBit(true)
-    flags.writeBit(false)
-    writePath(values, mask.commands)
-    flags.writeBit(false)
-    flags.writeBit(false)
+    flags.writeBit(mask.inverted ?? false)
+    const maskMode = readMaskMode(mask.mode ?? 'add')
+    writeValue(flags, maskMode !== 1, () => values.writeUint8(maskMode))
+    writePathProperty(flags, values, mask.commands)
+    if (mask.feather !== undefined) {
+      writePointProperty(flags, values, mask.feather, { x: 0, y: 0 }, 'spatial')
+    }
+    writeByteProperty(flags, values, mask.opacity, 255)
+    writeNumberProperty(flags, values, mask.expansion, 0)
     appendAttributeBlock(content, flags, values)
   })
 }
@@ -116,7 +119,7 @@ function writeLayerAttributes(stream: EncodeStream, layer: PagLayer): void {
     const flags = new EncodeStream()
     const values = new EncodeStream()
 
-    flags.writeBit(true)
+    flags.writeBit(layer.active ?? true)
     flags.writeBit(false)
     writeOptionalValue(flags, values, false, () => undefined)
     writeOptionalValue(flags, values, false, () => undefined)
@@ -124,7 +127,9 @@ function writeLayerAttributes(stream: EncodeStream, layer: PagLayer): void {
       values.writeEncodedUint(layer.startTime)
     })
     writeOptionalValue(flags, values, false, () => undefined)
-    writeOptionalValue(flags, values, false, () => undefined)
+    writeOptionalValue(flags, values, layer.trackMatteType !== undefined, () => {
+      values.writeUint8(readTrackMatteType(layer.trackMatteType!))
+    })
     flags.writeBit(false)
 
     values.writeEncodedUint(layer.duration)
@@ -133,6 +138,41 @@ function writeLayerAttributes(stream: EncodeStream, layer: PagLayer): void {
     content.writeBytes(flags.toUint8Array())
     content.writeBytes(values.toUint8Array())
   })
+}
+
+function writePathProperty(
+  flags: EncodeStream,
+  values: EncodeStream,
+  property: import('./types').PagProperty<PagPathCommand[]>,
+): void {
+  flags.writeBit(true)
+  if (!isAnimated(property)) {
+    flags.writeBit(false)
+    writePath(values, property)
+    return
+  }
+  flags.writeBit(true)
+  writeAnimatedProperty(values, property, (stream, paths) => {
+    for (const path of paths) writePath(stream, path)
+  })
+}
+
+function readTrackMatteType(type: NonNullable<PagLayer['trackMatteType']>): number {
+  if (type === 'alpha') return 1
+  if (type === 'alpha-inverted') return 2
+  if (type === 'luma') return 3
+  return 4
+}
+
+function readMaskMode(mode: import('./types').PagMaskMode): number {
+  if (mode === 'none') return 0
+  if (mode === 'add') return 1
+  if (mode === 'subtract') return 2
+  if (mode === 'intersect') return 3
+  if (mode === 'lighten') return 4
+  if (mode === 'darken') return 5
+  if (mode === 'difference') return 6
+  return 7
 }
 
 function writeTransform(stream: EncodeStream, transform: PagTransform): void {

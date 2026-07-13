@@ -37,8 +37,26 @@ export const solidFixture: PagComposition = {
     },
     {
       type: 'shape',
+      id: 5,
+      active: false,
+      name: 'Badge Matte',
+      startTime: 0,
+      duration: 30,
+      transform: {},
+      geometry: {
+        type: 'rectangle',
+        size: { x: 160, y: 90 },
+        position: { x: 80, y: 45 },
+        roundness: 0,
+      },
+      fill: { color: { red: 255, green: 255, blue: 255 }, opacity: 255 },
+      fillRule: 0,
+    },
+    {
+      type: 'shape',
       id: 3,
       name: 'Badge',
+      trackMatteType: 'alpha',
       startTime: 0,
       duration: 30,
       transform: {
@@ -90,6 +108,11 @@ export const solidFixture: PagComposition = {
       masks: [
         {
           id: 1,
+          mode: 'intersect',
+          inverted: true,
+          feather: { x: 2, y: 3 },
+          opacity: 200,
+          expansion: 1.5,
           commands: [
             { type: 'move', values: [0, 0] },
             { type: 'line', values: [1, 0] },

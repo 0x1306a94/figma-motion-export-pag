@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readMotionTransform } from '../src/export/motion'
+import {
+  composeAncestorMotionTransform,
+  readMotionAnchor,
+  readMotionTransform,
+  refreshMotionAnchorCache,
+} from '../src/export/motion'
+import type { PagPoint } from '../src/export/pag/types'
 import type { ExportTransformContext } from '../src/export/solid'
 
 const identityContext: ExportTransformContext = {
@@ -269,6 +275,37 @@ test('Motion Rotation 转换旋转方向并保持节点中心不动', () => {
   assert.deepEqual([rotation.keyframes[0].startValue, rotation.keyframes[0].endValue], [-180, 0])
 })
 
+test('纯 SET SCALE_XY 从当前渲染边界推导并缓存 Motion 锚点', () => {
+  const store = { value: '' }
+  const node = {
+    id: '17:91',
+    name: 'Rectangle 32',
+    width: 177,
+    height: 155,
+    animations: {
+      SCALE_XY: {
+        baseValue: { type: 'VECTOR', value: { x: 1, y: 1 } },
+        timelineDuration: 0.5,
+        tracks: [{
+          id: 'scale',
+          keyframeOperation: 'SET',
+          keyframes: [],
+        }],
+      },
+    },
+    absoluteBoundingBox: { x: 1280.992431640625, y: 3303.99658203125, width: 177.007568359375, height: 155.006591796875 },
+    absoluteRenderBounds: { x: 1220.043701171875, y: 3277.31005859375, width: 237.956298828125, height: 205.68994140625 },
+    getSharedPluginData: () => store.value,
+    setSharedPluginData: (_namespace: string, _key: string, value: string) => { store.value = value },
+  }
+
+  assert.deepEqual(refreshMotionAnchorCache(node as unknown as SceneNode), { x: 177, y: 77.5 })
+  assert.equal(store.value, '177,77.5')
+
+  node.absoluteRenderBounds = { ...node.absoluteBoundingBox }
+  assert.deepEqual(readMotionAnchor(node as unknown as SceneNode), { x: 177, y: 77.5 })
+})
+
 test('独立 SCALE_X 与 SCALE_Y 按各自时间线合成为二维 Scale', () => {
   const root = {}
   const scaleTrack = (id: string, endTime: number) => ({
@@ -471,4 +508,108 @@ test('根 Frame 水平翻转会映射 Motion 位移、旋转和缩放', () => {
   assert.deepEqual([rotation.keyframes[0].startValue, rotation.keyframes[0].endValue], [180, 210])
   assert.deepEqual(scale.keyframes[0].startValue, { x: 1, y: -1 })
   assert.deepEqual(scale.keyframes[0].endValue, { x: 2, y: -3 })
+})
+
+test('嵌套节点 Motion 使用直接父节点坐标映射到导出画布', () => {
+  const root = {}
+  const parent = {
+    absoluteTransform: [
+      [1, 0, 100],
+      [0, 1, 50],
+    ],
+  }
+  const node = {
+    id: '1:10',
+    name: 'Nested Motion',
+    parent,
+    width: 20,
+    height: 20,
+    animations: {
+      TRANSLATION_X: {
+        baseValue: { type: 'FLOAT', value: 10 },
+        timelineDuration: 1,
+        tracks: [{
+          id: 'position',
+          keyframeOperation: 'SET',
+          keyframes: [
+            { id: 'start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 10 } },
+            { id: 'end', timelinePosition: 1, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 30 } },
+          ],
+        }],
+      },
+    },
+    relativeTransform: [
+      [1, 0, 10],
+      [0, 1, 20],
+    ],
+  }
+  const transform = readMotionTransform(
+    node as unknown as SceneNode,
+    root as unknown as SceneNode,
+    10,
+    { position: { x: 110, y: 70 } },
+    [],
+    identityContext,
+  )
+  const x = transform.xPosition as { keyframes: Array<{ startValue: number; endValue: number }> }
+  assert.equal(x.keyframes[0].startValue, 110)
+  assert.equal(x.keyframes[0].endValue, 130)
+  assert.equal(transform.yPosition, 70)
+})
+
+test('容器 Motion 会逐帧合成到后代图层', () => {
+  const root = { absoluteTransform: identityContext.rootToExportTransform }
+  const parent = {
+    id: '1:11',
+    name: 'Animated Group',
+    parent: root,
+    width: 100,
+    height: 100,
+    opacity: 1,
+    animations: {
+      TRANSLATION_X: {
+        baseValue: { type: 'FLOAT', value: 100 },
+        timelineDuration: 1,
+        tracks: [{
+          id: 'position',
+          keyframeOperation: 'SET',
+          keyframes: [
+            { id: 'start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 100 } },
+            { id: 'end', timelinePosition: 1, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 200 } },
+          ],
+        }],
+      },
+    },
+    relativeTransform: [
+      [1, 0, 100],
+      [0, 1, 0],
+    ],
+    absoluteTransform: [
+      [1, 0, 100],
+      [0, 1, 0],
+    ],
+  }
+  const node = {
+    id: '1:12',
+    name: 'Child',
+    parent,
+    animations: {},
+    relativeTransform: [
+      [1, 0, 10],
+      [0, 1, 0],
+    ],
+  }
+  const transform = composeAncestorMotionTransform(
+    node as unknown as SceneNode,
+    root as unknown as SceneNode,
+    [parent as unknown as SceneNode],
+    10,
+    10,
+    { position: { x: 110, y: 0 } },
+    [],
+    identityContext,
+  )
+  const position = transform.position as { keyframes: Array<{ startValue: PagPoint; endValue: PagPoint }> }
+  assert.deepEqual(position.keyframes[0].startValue, { x: 110, y: 0 })
+  assert.deepEqual(position.keyframes[position.keyframes.length - 1].endValue, { x: 210, y: 0 })
 })

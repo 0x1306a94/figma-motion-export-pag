@@ -16,7 +16,7 @@ int main(int argumentCount, char** arguments) {
     std::cerr << "PAGFile::Load failed\n";
     return 1;
   }
-  if (file->width() != 320 || file->height() != 180 || file->numChildren() != 3) {
+  if (file->width() != 320 || file->height() != 180 || file->numChildren() != 4) {
     std::cerr << "composition metadata mismatch\n";
     return 1;
   }
@@ -28,6 +28,7 @@ int main(int argumentCount, char** arguments) {
   bool foundSolid = false;
   bool foundShape = false;
   bool foundImage = false;
+  bool foundTrackMatte = false;
   for (int index = 0; index < file->numChildren(); index++) {
     auto layer = file->getLayerAt(index);
     foundSolid = foundSolid ||
@@ -39,8 +40,12 @@ int main(int argumentCount, char** arguments) {
     foundImage = foundImage ||
                  (layer != nullptr && layer->layerType() == pag::LayerType::Image &&
                   layer->layerName() == "Picture");
+    if (layer != nullptr && layer->layerName() == "Badge") {
+      auto matte = layer->trackMatteLayer();
+      foundTrackMatte = matte != nullptr && matte->layerName() == "Badge Matte";
+    }
   }
-  if (!foundSolid || !foundShape || !foundImage || file->numImages() != 1) {
+  if (!foundSolid || !foundShape || !foundImage || !foundTrackMatte || file->numImages() != 1) {
     std::cerr << "layer mismatch\n";
     return 1;
   }
@@ -49,10 +54,27 @@ int main(int argumentCount, char** arguments) {
   auto rootLayer = decoded == nullptr ? nullptr : decoded->getRootLayer();
   auto composition = rootLayer == nullptr ? nullptr : dynamic_cast<pag::VectorComposition*>(rootLayer->composition);
   pag::Layer* animatedLayer = nullptr;
+  pag::Layer* maskedLayer = nullptr;
+  pag::Layer* matteLayer = nullptr;
   if (composition != nullptr) {
     for (auto layer : composition->layers) {
       if (layer->name == "Badge") animatedLayer = layer;
+      if (layer->name == "Picture") maskedLayer = layer;
+      if (layer->name == "Badge Matte") matteLayer = layer;
     }
+  }
+  if (matteLayer == nullptr || matteLayer->isActive) {
+    std::cerr << "track matte active state mismatch\n";
+    return 1;
+  }
+  if (maskedLayer == nullptr || maskedLayer->masks.size() != 1 ||
+      maskedLayer->masks[0]->maskMode != pag::MaskMode::Intersect ||
+      !maskedLayer->masks[0]->inverted || maskedLayer->masks[0]->maskFeather == nullptr ||
+      maskedLayer->masks[0]->maskFeather->getValueAt(0).x != 2 ||
+      maskedLayer->masks[0]->maskOpacity->getValueAt(0) != 200 ||
+      std::abs(maskedLayer->masks[0]->maskExpansion->getValueAt(0) - 1.5f) > 0.001f) {
+    std::cerr << "mask mismatch\n";
+    return 1;
   }
   if (animatedLayer == nullptr || animatedLayer->transform == nullptr ||
       animatedLayer->transform->position == nullptr ||

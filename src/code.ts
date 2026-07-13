@@ -1,4 +1,10 @@
 import { exportSelection } from './export/export-selection'
+import {
+  clearMotionAnchorCache,
+  readCachedMotionAnchor,
+  refreshMotionAnchorCache,
+  setMotionAnchorCache,
+} from './export/motion'
 import { ExportError } from './export/types'
 import type { AnimationDebugData, AnimationDebugNode, PluginMessage, UiMessage } from './export/types'
 
@@ -24,6 +30,18 @@ figma.ui.onmessage = async (message: PluginMessage) => {
   }
   if (message.type === 'request-animation-debug-data') {
     postAnimationDebugData()
+    return
+  }
+  if (message.type === 'refresh-motion-anchor') {
+    refreshSelectedMotionAnchor()
+    return
+  }
+  if (message.type === 'set-motion-anchor') {
+    setSelectedMotionAnchor(message.x, message.y)
+    return
+  }
+  if (message.type === 'clear-motion-anchor') {
+    clearSelectedMotionAnchor()
     return
   }
   if (message.type === 'webp-result') {
@@ -65,6 +83,56 @@ figma.ui.onmessage = async (message: PluginMessage) => {
   }
 }
 
+function refreshSelectedMotionAnchor(): void {
+  const selection = figma.currentPage.selection
+  if (selection.length !== 1) {
+    postMessage({ type: 'motion-anchor-result', success: false, message: '请选择一个节点。' })
+    return
+  }
+  const anchor = refreshMotionAnchorCache(selection[0])
+  if (anchor === null) {
+    postMessage({
+      type: 'motion-anchor-result',
+      success: false,
+      message: '未能推导锚点。请将纯 SET SCALE_XY 动画拖到已发生缩放的位置后重试。',
+    })
+    return
+  }
+  postMessage({
+    type: 'motion-anchor-result',
+    success: true,
+    message: `已缓存锚点：${anchor.x}, ${anchor.y}`,
+    anchor,
+  })
+  if (developerModeEnabled) postAnimationDebugData()
+}
+
+function setSelectedMotionAnchor(x: number, y: number): void {
+  const node = selectedNodeForMotionAnchor()
+  if (node === null) return
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    postMessage({ type: 'motion-anchor-result', success: false, message: '锚点坐标必须是有效数字。' })
+    return
+  }
+  const anchor = { x, y }
+  setMotionAnchorCache(node, anchor)
+  postMessage({ type: 'motion-anchor-result', success: true, message: `已缓存锚点：${x}, ${y}`, anchor })
+}
+
+function clearSelectedMotionAnchor(): void {
+  const node = selectedNodeForMotionAnchor()
+  if (node === null) return
+  clearMotionAnchorCache(node)
+  postMessage({ type: 'motion-anchor-result', success: true, message: '已清除锚点缓存。' })
+}
+
+function selectedNodeForMotionAnchor(): SceneNode | null {
+  const selection = figma.currentPage.selection
+  if (selection.length === 1) return selection[0]
+  postMessage({ type: 'motion-anchor-result', success: false, message: '请选择一个节点。' })
+  return null
+}
+
 function encodeWebP(source: Uint8Array, mimeType: string, quality: number): Promise<Uint8Array> {
   const requestId = nextWebPRequestId++
   return new Promise((resolve, reject) => {
@@ -78,11 +146,15 @@ updateSelection()
 
 function updateSelection(): void {
   const selection = figma.currentPage.selection
-  const frame = selection.length === 1 && selection[0].type === 'FRAME' ? selection[0] : undefined
+  const node = selection.length === 1 ? selection[0] : undefined
+  console.log('node', node)
   postMessage({
     type: 'selection-changed',
-    canExport: frame !== undefined,
-    selectionName: frame?.name,
+    canExport: node !== undefined,
+    selectionName: node?.name,
+    selectionWidth: node?.width,
+    selectionHeight: node?.height,
+    motionAnchor: node === undefined ? undefined : readCachedMotionAnchor(node) ?? undefined,
   })
   if (developerModeEnabled) postAnimationDebugData()
 }
