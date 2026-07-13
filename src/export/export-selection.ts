@@ -15,6 +15,7 @@ import { ExportError } from './types'
 import type { ExportOptions } from './types'
 import { readMaskMatte } from './mask'
 import type { FigmaMaskNode } from './mask'
+import { readTextNode } from './text'
 
 export interface ExportResult {
   bytes: Uint8Array
@@ -89,11 +90,32 @@ export async function exportSelection(
   const visit = async (node: SceneNode, ancestors: SceneNode[], mask?: ActiveMask): Promise<void> => {
     if (!node.visible) return
     if (node.type === 'TEXT') {
-      warnings.push({
-        nodeId: node.id,
-        nodeName: node.name,
-        message: '当前版本暂不支持文本图层，已忽略。',
-      })
+      validateLayerNode(node)
+      const text = readTextNode(node, nextId, duration, transformContext, warnings)
+      text.effects = readLayerEffects(node, options.frameRate, warnings)
+      text.transform = readMotionTransform(
+        node,
+        root,
+        options.frameRate,
+        text.transform,
+        warnings,
+        transformContext,
+        readPaintOpacity(node),
+      )
+      if (
+        !text.sourceText.boxText
+        && text.transform.position !== undefined
+        && typeof text.transform.position === 'object'
+        && 'keyframes' in text.transform.position
+      ) {
+        warnings.push({
+          nodeId: node.id,
+          nodeName: node.name,
+          message: '点文本含位移动画时暂不覆盖基线锚点，仍用原始位置采样。',
+        })
+      }
+      nextId += 1
+      await appendLayer(node, ancestors, text, mask)
       return
     }
     validateLayerNode(node)

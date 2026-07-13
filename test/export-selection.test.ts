@@ -232,7 +232,7 @@ test('任意单选叶子节点可作为导出根节点', async () => {
   assert.ok(new TextDecoder().decode(result.bytes).includes('Selected Rectangle'))
 })
 
-test('普通 TEXT 子图层会被忽略且不中断其他图层导出', async () => {
+test('普通 TEXT 子图层会导出为 PAG 文本图层', async () => {
   const root = {
     id: '72:163',
     name: 'Frame10',
@@ -256,6 +256,26 @@ test('普通 TEXT 子图层会被忽略且不中断其他图层导出', async ()
     name: 'Figma Motion to PAG',
     type: 'TEXT',
     visible: true,
+    parent: root,
+    animations: {},
+    effects: [],
+    blendMode: 'NORMAL',
+    opacity: 1,
+    width: 220,
+    height: 32,
+    characters: 'Figma Motion to PAG',
+    fontName: { family: 'Inter', style: 'Regular' },
+    fontSize: 24,
+    textAutoResize: 'WIDTH_AND_HEIGHT',
+    textAlignHorizontal: 'LEFT',
+    textAlignVertical: 'TOP',
+    lineHeight: { unit: 'AUTO' },
+    letterSpacing: { unit: 'PIXELS', value: 0 },
+    fills: [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 }, visible: true }],
+    absoluteTransform: [
+      [1, 0, 40],
+      [0, 1, 80],
+    ],
   } as unknown as SceneNode
   const imageLikeSolid = {
     id: '72:164',
@@ -289,8 +309,8 @@ test('普通 TEXT 子图层会被忽略且不中断其他图层导出', async ()
     { frameRate: 30, webpEnabled: false, webpQuality: 80 },
     async (bytes) => bytes,
   )
-  assert.equal(result.warnings.length, 1)
-  assert.equal(result.warnings[0].nodeName, 'Figma Motion to PAG')
-  assert.match(result.warnings[0].message, /已忽略/)
+  assert.equal(result.warnings.length, 0)
+  assert.ok(new TextDecoder().decode(result.bytes).includes('Figma Motion to PAG'))
+  assert.ok(new TextDecoder().decode(result.bytes).includes('Inter'))
   assert.ok(new TextDecoder().decode(result.bytes).includes('Background'))
 })

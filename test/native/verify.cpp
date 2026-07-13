@@ -16,7 +16,7 @@ int main(int argumentCount, char** arguments) {
     std::cerr << "PAGFile::Load failed\n";
     return 1;
   }
-  if (file->width() != 320 || file->height() != 180 || file->numChildren() != 4) {
+  if (file->width() != 320 || file->height() != 180 || file->numChildren() != 5) {
     std::cerr << "composition metadata mismatch\n";
     return 1;
   }
@@ -28,6 +28,7 @@ int main(int argumentCount, char** arguments) {
   bool foundSolid = false;
   bool foundShape = false;
   bool foundImage = false;
+  bool foundText = false;
   bool foundTrackMatte = false;
   for (int index = 0; index < file->numChildren(); index++) {
     auto layer = file->getLayerAt(index);
@@ -40,12 +41,16 @@ int main(int argumentCount, char** arguments) {
     foundImage = foundImage ||
                  (layer != nullptr && layer->layerType() == pag::LayerType::Image &&
                   layer->layerName() == "Picture");
+    foundText = foundText ||
+                (layer != nullptr && layer->layerType() == pag::LayerType::Text &&
+                 layer->layerName() == "Title");
     if (layer != nullptr && layer->layerName() == "Badge") {
       auto matte = layer->trackMatteLayer();
       foundTrackMatte = matte != nullptr && matte->layerName() == "Badge Matte";
     }
   }
-  if (!foundSolid || !foundShape || !foundImage || !foundTrackMatte || file->numImages() != 1) {
+  if (!foundSolid || !foundShape || !foundImage || !foundText || !foundTrackMatte ||
+      file->numImages() != 1) {
     std::cerr << "layer mismatch\n";
     return 1;
   }

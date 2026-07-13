@@ -110,6 +110,41 @@ export interface PagImageLayer extends PagLayerBase {
   imageId: number
 }
 
+export enum ParagraphJustification {
+  Left = 0,
+  Center = 1,
+  Right = 2,
+  FullLastLineLeft = 3,
+}
+
+export interface PagTextDocument {
+  applyFill: boolean
+  applyStroke: boolean
+  boxText: boolean
+  fauxBold: boolean
+  fauxItalic: boolean
+  strokeOverFill: boolean
+  baselineShift: number
+  firstBaseLine: number
+  boxTextPos: PagPoint
+  boxTextSize: PagPoint
+  fillColor: PagColor
+  fontSize: number
+  strokeColor: PagColor
+  strokeWidth: number
+  text: string
+  justification: ParagraphJustification
+  leading: number
+  tracking: number
+  fontFamily: string
+  fontStyle: string
+}
+
+export interface PagTextLayer extends PagLayerBase {
+  type: 'text'
+  sourceText: PagTextDocument
+}
+
 export interface PagImage {
   id: number
   width: number
@@ -118,7 +153,7 @@ export interface PagImage {
   explicitSize: boolean
 }
 
-export type PagLayer = PagSolidLayer | PagShapeLayer | PagImageLayer
+export type PagLayer = PagSolidLayer | PagShapeLayer | PagImageLayer | PagTextLayer
 
 export interface PagComposition {
   id: number

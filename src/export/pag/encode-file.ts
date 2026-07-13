@@ -30,16 +30,20 @@ const enum TagCode {
   ImageBytesV3 = 49,
   LayerAttributesV2 = 52,
   FastBlurEffect = 60,
+  FontTables = 1,
+  TextSource = 8,
 }
 
 const enum LayerType {
   Solid = 2,
   Shape = 4,
   Image = 5,
+  Text = 3,
 }
 
 export function encodePagFile(composition: PagComposition): Uint8Array {
   const body = new EncodeStream()
+  const fontIds = writeFontTables(body, composition)
   for (const image of composition.images ?? []) {
     writeTag(body, image.explicitSize ? TagCode.ImageBytesV3 : TagCode.ImageBytes, (stream) => {
       stream.writeEncodedUint(image.id)
@@ -57,7 +61,7 @@ export function encodePagFile(composition: PagComposition): Uint8Array {
   writeTag(body, TagCode.VectorCompositionBlock, (stream) => {
     stream.writeEncodedUint(composition.id)
     writeCompositionAttributes(stream, composition)
-    for (const layer of composition.layers) writeLayer(stream, layer)
+    for (const layer of composition.layers) writeLayer(stream, layer, fontIds)
     writeEndTag(stream)
   })
   writeEndTag(body)
@@ -81,10 +85,16 @@ function writeCompositionAttributes(stream: EncodeStream, composition: PagCompos
   })
 }
 
-function writeLayer(stream: EncodeStream, layer: PagLayer): void {
+function writeLayer(stream: EncodeStream, layer: PagLayer, fontIds: Map<string, number>): void {
   writeTag(stream, TagCode.LayerBlock, (content) => {
     content.writeUint8(
-      layer.type === 'solid' ? LayerType.Solid : layer.type === 'shape' ? LayerType.Shape : LayerType.Image,
+      layer.type === 'solid'
+        ? LayerType.Solid
+        : layer.type === 'shape'
+          ? LayerType.Shape
+          : layer.type === 'text'
+            ? LayerType.Text
+            : LayerType.Image,
     )
     content.writeEncodedUint(layer.id)
     writeLayerAttributes(content, layer)
@@ -93,9 +103,99 @@ function writeLayer(stream: EncodeStream, layer: PagLayer): void {
     writeTransform(content, layer.transform)
     if (layer.type === 'solid') writeSolidColor(content, layer)
     else if (layer.type === 'shape') writeShape(content, layer)
+    else if (layer.type === 'text') writeTextSource(content, layer.sourceText, fontIds)
     else writeTag(content, TagCode.ImageReference, (reference) => reference.writeEncodedUint(layer.imageId))
     writeEndTag(content)
   })
+}
+
+function writeFontTables(stream: EncodeStream, composition: PagComposition): Map<string, number> {
+  const fonts: Array<{ family: string; style: string }> = []
+  const fontIds = new Map<string, number>()
+  for (const layer of composition.layers) {
+    if (layer.type !== 'text') continue
+    const key = `${layer.sourceText.fontFamily} - ${layer.sourceText.fontStyle}`
+    if (fontIds.has(key)) continue
+    fontIds.set(key, fonts.length)
+    fonts.push({ family: layer.sourceText.fontFamily, style: layer.sourceText.fontStyle })
+  }
+  if (fonts.length > 0) {
+    writeTag(stream, TagCode.FontTables, (content) => {
+      content.writeEncodedUint(fonts.length)
+      for (const font of fonts) {
+        content.writeString(font.family)
+        content.writeString(font.style)
+      }
+    })
+  }
+  return fontIds
+}
+
+function writeTextSource(
+  stream: EncodeStream,
+  document: import('./types').PagTextDocument,
+  fontIds: Map<string, number>,
+): void {
+  writeTag(stream, TagCode.TextSource, (content) => {
+    content.writeBit(true)
+    content.writeBit(false)
+    const flags = new EncodeStream()
+    const values = new EncodeStream()
+    flags.writeBit(document.applyFill)
+    flags.writeBit(document.applyStroke)
+    flags.writeBit(document.boxText)
+    flags.writeBit(document.fauxBold)
+    flags.writeBit(document.fauxItalic)
+    flags.writeBit(document.strokeOverFill)
+    writeTextNumber(flags, values, document.baselineShift, 0)
+    writeTextNumber(flags, values, document.firstBaseLine, 0)
+    writeTextPoint(flags, values, document.boxTextPos)
+    writeTextPoint(flags, values, document.boxTextSize)
+    writeTextColor(flags, values, document.fillColor)
+    writeTextNumber(flags, values, document.fontSize, 24)
+    writeTextColor(flags, values, document.strokeColor)
+    writeTextNumber(flags, values, document.strokeWidth, 1)
+    writeTextString(flags, values, document.text)
+    writeTextByte(flags, values, document.justification, 0)
+    writeTextNumber(flags, values, document.leading, 0)
+    writeTextNumber(flags, values, document.tracking, 0)
+    flags.writeBit(true)
+    values.writeEncodedUint(
+      fontIds.get(`${document.fontFamily} - ${document.fontStyle}`) ?? 0,
+    )
+    content.writeBytes(flags.toUint8Array())
+    content.writeBytes(values.toUint8Array())
+  })
+}
+
+function writeTextNumber(flags: EncodeStream, values: EncodeStream, value: number, defaultValue: number): void {
+  flags.writeBit(value !== defaultValue)
+  if (value !== defaultValue) values.writeFloat32(value)
+}
+
+function writeTextPoint(flags: EncodeStream, values: EncodeStream, value: PagPoint): void {
+  const exists = value.x !== 0 || value.y !== 0
+  flags.writeBit(exists)
+  if (exists) {
+    values.writeFloat32(value.x)
+    values.writeFloat32(value.y)
+  }
+}
+
+function writeTextColor(flags: EncodeStream, values: EncodeStream, value: PagColor): void {
+  const exists = value.red !== 0 || value.green !== 0 || value.blue !== 0
+  flags.writeBit(exists)
+  if (exists) writeColor(values, value)
+}
+
+function writeTextString(flags: EncodeStream, values: EncodeStream, value: string): void {
+  flags.writeBit(value !== '')
+  if (value !== '') values.writeString(value)
+}
+
+function writeTextByte(flags: EncodeStream, values: EncodeStream, value: number, defaultValue: number): void {
+  flags.writeBit(value !== defaultValue)
+  if (value !== defaultValue) values.writeUint8(value)
 }
 
 function writeFastBlurEffect(
