@@ -18,6 +18,14 @@
     button { flex: 1; height: 34px; border: 0; border-radius: 6px; background: #0d99ff; color: white; font-weight: 600; }
     button.secondary { background: #e5e5e5; color: #333; }
     button:disabled { background: #b8b8b8; }
+    .developer { margin-top: 16px; padding-top: 12px; border-top: 1px solid #e5e5e5; }
+    .developer-panel[hidden] { display: none; }
+    .developer-panel { margin-top: 8px; }
+    .developer-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+    .developer-actions button { height: 30px; }
+    .developer-output { width: 100%; height: 190px; padding: 8px; resize: vertical; border: 1px solid #ddd; border-radius: 6px; font: 11px/1.4 monospace; }
+    .developer-status { min-height: 18px; margin-top: 4px; color: #555; }
+    .developer-status.error { color: #d92d20; }
   </style>
 </head>
 <body>
@@ -47,6 +55,20 @@
     <button id="export" disabled>导出 PAG</button>
     <button id="cancel" class="secondary" disabled>取消</button>
   </div>
+  <div class="developer">
+    <label class="row">
+      <span>开发者模式</span>
+      <input id="developer-enabled" type="checkbox">
+    </label>
+    <div id="developer-panel" class="developer-panel" hidden>
+      <div class="developer-actions">
+        <button id="refresh-debug-data" class="secondary">刷新</button>
+        <button id="copy-debug-data">复制 JSON</button>
+      </div>
+      <textarea id="developer-output" class="developer-output" readonly></textarea>
+      <div id="developer-status" class="developer-status"></div>
+    </div>
+  </div>
 
   <script>
     const selection = document.getElementById('selection')
@@ -57,6 +79,12 @@
     const status = document.getElementById('status')
     const exportButton = document.getElementById('export')
     const cancelButton = document.getElementById('cancel')
+    const developerEnabled = document.getElementById('developer-enabled')
+    const developerPanel = document.getElementById('developer-panel')
+    const refreshDebugDataButton = document.getElementById('refresh-debug-data')
+    const copyDebugDataButton = document.getElementById('copy-debug-data')
+    const developerOutput = document.getElementById('developer-output')
+    const developerStatus = document.getElementById('developer-status')
     let canExport = false
     let exporting = false
 
@@ -86,6 +114,26 @@
       status.className = 'status'
       status.textContent = '导出已取消。'
       setExporting(false)
+    }
+    developerEnabled.onchange = () => {
+      developerPanel.hidden = !developerEnabled.checked
+      parent.postMessage({
+        pluginMessage: { type: 'set-developer-mode', enabled: developerEnabled.checked },
+      }, '*')
+    }
+    refreshDebugDataButton.onclick = () => {
+      requestAnimationDebugData()
+    }
+    copyDebugDataButton.onclick = async () => {
+      if (developerOutput.value === '') return
+      try {
+        await navigator.clipboard.writeText(developerOutput.value)
+      } catch {
+        developerOutput.select()
+        document.execCommand('copy')
+      }
+      developerStatus.className = 'developer-status'
+      developerStatus.textContent = 'JSON 已复制。'
     }
 
     onmessage = async (event) => {
@@ -117,7 +165,21 @@
         setExporting(false)
       } else if (message.type === 'encode-webp') {
         await encodeWebp(message)
+      } else if (message.type === 'animation-debug-data') {
+        developerOutput.value = JSON.stringify(message.data, null, 2)
+        developerStatus.className = 'developer-status'
+        developerStatus.textContent = `已遍历 ${message.data.visitedNodeCount} 个节点，找到 ${message.data.animatedNodes.length} 个动画节点。`
+      } else if (message.type === 'animation-debug-error') {
+        developerOutput.value = ''
+        developerStatus.className = 'developer-status error'
+        developerStatus.textContent = message.message
       }
+    }
+
+    function requestAnimationDebugData() {
+      developerStatus.className = 'developer-status'
+      developerStatus.textContent = '正在读取动画数据…'
+      parent.postMessage({ pluginMessage: { type: 'request-animation-debug-data' } }, '*')
     }
 
     function setExporting(value) {

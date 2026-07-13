@@ -1,10 +1,14 @@
 import { exportSelection } from './export/export-selection'
 import { ExportError } from './export/types'
-import type { PluginMessage, UiMessage } from './export/types'
+import type { AnimationDebugData, AnimationDebugNode, PluginMessage, UiMessage } from './export/types'
 
-figma.showUI(__html__, { width: 360, height: 430 })
+const defaultUiHeight = 430
+const developerUiHeight = 720
+
+figma.showUI(__html__, { width: 360, height: defaultUiHeight })
 
 let cancelled = false
+let developerModeEnabled = false
 let nextWebPRequestId = 1
 const webPRequests = new Map<
   number,
@@ -12,6 +16,16 @@ const webPRequests = new Map<
 >()
 
 figma.ui.onmessage = async (message: PluginMessage) => {
+  if (message.type === 'set-developer-mode') {
+    developerModeEnabled = message.enabled
+    figma.ui.resize(360, message.enabled ? developerUiHeight : defaultUiHeight)
+    if (message.enabled) postAnimationDebugData()
+    return
+  }
+  if (message.type === 'request-animation-debug-data') {
+    postAnimationDebugData()
+    return
+  }
   if (message.type === 'webp-result') {
     const request = webPRequests.get(message.requestId)
     if (request === undefined) return
@@ -70,6 +84,66 @@ function updateSelection(): void {
     canExport: frame !== undefined,
     selectionName: frame?.name,
   })
+  if (developerModeEnabled) postAnimationDebugData()
+}
+
+function postAnimationDebugData(): void {
+  const selection = figma.currentPage.selection
+  if (selection.length !== 1) {
+    postMessage({ type: 'animation-debug-error', message: '请选择一个节点。' })
+    return
+  }
+
+  postMessage({ type: 'animation-debug-data', data: collectAnimationDebugData(selection[0]) })
+}
+
+function collectAnimationDebugData(selectedNode: SceneNode): AnimationDebugData {
+  const animatedNodes: AnimationDebugNode[] = []
+  let visitedNodeCount = 0
+
+  function visit(node: SceneNode, path: string): void {
+    visitedNodeCount++
+    if (hasAnimationData(node)) {
+      animatedNodes.push({
+        id: node.id,
+        name: node.name,
+        type: node.type,
+        parentId: node.parent?.id,
+        path,
+        x: node.x,
+        y: node.y,
+        width: node.width,
+        height: node.height,
+        rotation: 'rotation' in node ? node.rotation : undefined,
+        opacity: 'opacity' in node ? node.opacity : undefined,
+        relativeTransform: node.relativeTransform,
+        absoluteTransform: node.absoluteTransform,
+        animationStyles: node.animationStyles,
+        animations: node.animations,
+        manualKeyframeTracks: node.manualKeyframeTracks,
+        timelines: node.timelines,
+      })
+    }
+
+    if ('children' in node) {
+      for (const child of node.children) visit(child, `${path} / ${child.name}`)
+    }
+  }
+
+  visit(selectedNode, selectedNode.name)
+  return {
+    selectedNode: { id: selectedNode.id, name: selectedNode.name, type: selectedNode.type },
+    visitedNodeCount,
+    animatedNodes,
+  }
+}
+
+function hasAnimationData(node: SceneNode): boolean {
+  return (
+    node.animationStyles.length > 0 ||
+    Object.keys(node.animations).length > 0 ||
+    Object.keys(node.manualKeyframeTracks).length > 0
+  )
 }
 
 function postMessage(message: UiMessage): void {

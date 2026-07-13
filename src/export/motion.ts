@@ -20,6 +20,36 @@ const supportedFields = new Set([
   'SCALE_XY',
 ])
 
+interface ValueMath<T> {
+  add(left: T, right: T): T
+  multiply(left: T, right: T): T
+  interpolate(start: T, end: T, progress: number): T
+  equals(left: T, right: T): boolean
+}
+
+interface PreparedTrack<T> {
+  operation: ManualKeyframeTrack['keyframeOperation']
+  points: Array<{ frame: number; value: T; easing: MotionEasing | VariableAlias }>
+}
+
+const numberMath: ValueMath<number> = {
+  add: (left, right) => left + right,
+  multiply: (left, right) => left * right,
+  interpolate: (start, end, progress) => start + (end - start) * progress,
+  equals: (left, right) => Math.abs(left - right) < 0.0001,
+}
+
+const pointMath: ValueMath<PagPoint> = {
+  add: (left, right) => ({ x: left.x + right.x, y: left.y + right.y }),
+  multiply: (left, right) => ({ x: left.x * right.x, y: left.y * right.y }),
+  interpolate: (start, end, progress) => ({
+    x: start.x + (end.x - start.x) * progress,
+    y: start.y + (end.y - start.y) * progress,
+  }),
+  equals: (left, right) =>
+    Math.abs(left.x - right.x) < 0.0001 && Math.abs(left.y - right.y) < 0.0001,
+}
+
 export function readMotionTransform(
   node: SceneNode,
   root: FrameNode,
@@ -45,7 +75,13 @@ export function readMotionTransform(
     fail(node, 'TRANSLATION_XY 不能与 TRANSLATION_X/Y 同时使用。')
   }
   if (positionXY !== undefined) {
-    result.position = mapPointProperty(positionXY, (point) => mapPosition(point, context))
+    const staticPosition = {
+      x: node.relativeTransform[0][2],
+      y: node.relativeTransform[1][2],
+    }
+    result.position = mapPointProperty(positionXY, (point) =>
+      mapPosition({ x: staticPosition.x + point.x, y: staticPosition.y + point.y }, context),
+    )
     result.xPosition = undefined
     result.yPosition = undefined
   } else if (positionX !== undefined || positionY !== undefined) {
@@ -65,7 +101,7 @@ export function readMotionTransform(
 
   const rotation = readNumberBinding(node, 'ROTATION', frameRate, warnings)
   if (rotation !== undefined) {
-    result.rotation = mapNumberProperty(rotation, context.orientation, context.rotation)
+    result.rotation = mapNumberProperty(rotation, -context.orientation, context.rotation)
   }
   const opacity = readNumberBinding(
     node,
@@ -106,7 +142,48 @@ export function readMotionTransform(
       false,
     )
   }
+  if (
+    rotation !== undefined ||
+    scaleXY !== undefined ||
+    scaleX !== undefined ||
+    scaleY !== undefined
+  ) {
+    applyCenterAnchor(node, result, context)
+  }
   return result
+}
+
+function applyCenterAnchor(
+  node: SceneNode,
+  transform: PagTransform,
+  context: ExportTransformContext,
+): void {
+  const anchor = { x: node.width / 2, y: node.height / 2 }
+  const nodeTransform = node.relativeTransform
+  const centerInRoot = {
+    x: nodeTransform[0][0] * anchor.x + nodeTransform[0][1] * anchor.y,
+    y: nodeTransform[1][0] * anchor.x + nodeTransform[1][1] * anchor.y,
+  }
+  const rootTransform = context.rootToExportTransform
+  const centerInExport = {
+    x: rootTransform[0][0] * centerInRoot.x + rootTransform[0][1] * centerInRoot.y,
+    y: rootTransform[1][0] * centerInRoot.x + rootTransform[1][1] * centerInRoot.y,
+  }
+
+  transform.anchorPoint = anchor
+  if (transform.position !== undefined) {
+    transform.position = mapPointProperty(transform.position, (position) => ({
+      x: position.x + centerInExport.x,
+      y: position.y + centerInExport.y,
+    }))
+    return
+  }
+  if (transform.xPosition !== undefined) {
+    transform.xPosition = mapNumberProperty(transform.xPosition, 1, centerInExport.x)
+  }
+  if (transform.yPosition !== undefined) {
+    transform.yPosition = mapNumberProperty(transform.yPosition, 1, centerInExport.y)
+  }
 }
 
 function mapPosition(point: PagPoint, context: ExportTransformContext): PagPoint {
@@ -178,11 +255,12 @@ function readNumberBinding(
 ): PagProperty<number> | undefined {
   const binding = node.animations[field]
   if (binding === undefined) return undefined
-  return readBinding(node, binding, frameRate, warnings, (value) => {
+  const property = readBinding(node, binding, frameRate, warnings, (value) => {
     if (value.type !== 'FLOAT') fail(node, `${field} 必须使用 FLOAT 关键帧值。`)
     if (!Number.isFinite(value.value)) fail(node, `${field} 包含无效数值。`)
-    return mapValue(value.value)
-  }, 1)
+    return value.value
+  }, numberMath, 1)
+  return mapPropertyValues(property, mapValue)
 }
 
 function readPointBinding(
@@ -200,7 +278,7 @@ function readPointBinding(
       fail(node, `${field} 包含无效数值。`)
     }
     return { x: value.value.x, y: value.value.y }
-  }, dimensions)
+  }, pointMath, dimensions)
 }
 
 function readBinding<T>(
@@ -209,29 +287,25 @@ function readBinding<T>(
   frameRate: number,
   warnings: ExportIssue[],
   readValue: (value: KeyframeValue) => T,
+  math: ValueMath<T>,
   dimensions: number,
 ): PagProperty<T> {
-  if (binding.tracks.length !== 1) fail(node, '每个 Motion 属性仅支持一条 track。')
-  const track = binding.tracks[0]
-  if (track.keyframeOperation !== 'SET') fail(node, 'Motion track 仅支持 SET 操作。')
+  const baseValue = readValue(binding.baseValue)
+  const tracks = binding.tracks.map((track) =>
+    prepareTrack(node, track, frameRate, warnings, readValue),
+  )
+  if (tracks.length === 0) return baseValue
+  if (tracks.length > 1) {
+    return sampleTracks(node, binding, tracks, baseValue, frameRate, math)
+  }
 
   const points = new Map<number, { value: T; easing?: MotionEasing | VariableAlias }>()
-  points.set(0, { value: readValue(binding.baseValue) })
-  const keyframeFrames = new Set<number>()
-  for (const keyframe of track.keyframes) {
-    if (!Number.isFinite(keyframe.timelinePosition) || keyframe.timelinePosition < 0) {
-      fail(node, 'Motion 关键帧时间必须是非负有限数。')
-    }
-    const frame = Math.round(keyframe.timelinePosition * frameRate)
-    if (keyframeFrames.has(frame)) {
-      warnings.push({
-        nodeId: node.id,
-        nodeName: node.name,
-        message: `第 ${frame} 帧存在关键帧碰撞，已保留后写入的值。`,
-      })
-    }
-    keyframeFrames.add(frame)
-    points.set(frame, { value: readValue(keyframe.value), easing: keyframe.easing })
+  points.set(0, { value: baseValue, easing: { type: 'HOLD' } })
+  for (const point of tracks[0].points) {
+    points.set(point.frame, {
+      value: applyOperation(baseValue, point.value, tracks[0].operation, math),
+      easing: point.easing,
+    })
   }
   const ordered = [...points.entries()].sort(([left], [right]) => left - right)
   if (ordered.length === 1) return ordered[0][1].value
@@ -240,7 +314,7 @@ function readBinding<T>(
   for (let index = 0; index < ordered.length - 1; index += 1) {
     const [startTime, start] = ordered[index]
     const [endTime, end] = ordered[index + 1]
-    const easing = readEasing(node, end.easing, dimensions)
+    const easing = readEasing(node, start.easing, dimensions)
     keyframes.push({
       startTime,
       endTime,
@@ -251,6 +325,114 @@ function readBinding<T>(
     })
   }
   return { keyframes }
+}
+
+function prepareTrack<T>(
+  node: SceneNode,
+  track: ManualKeyframeTrack,
+  frameRate: number,
+  warnings: ExportIssue[],
+  readValue: (value: KeyframeValue) => T,
+): PreparedTrack<T> {
+  const timelineOffset = getTimelineOffset(node, track)
+  const points = new Map<number, PreparedTrack<T>['points'][number]>()
+  for (const keyframe of track.keyframes) {
+    if (!Number.isFinite(keyframe.timelinePosition) || keyframe.timelinePosition < 0) {
+      fail(node, 'Motion 关键帧时间必须是非负有限数。')
+    }
+    const frame = Math.round((keyframe.timelinePosition + timelineOffset) * frameRate)
+    if (points.has(frame)) {
+      warnings.push({
+        nodeId: node.id,
+        nodeName: node.name,
+        message: `第 ${frame} 帧存在关键帧碰撞，已保留后写入的值。`,
+      })
+    }
+    points.set(frame, {
+      frame,
+      value: readValue(keyframe.value),
+      easing: keyframe.easing,
+    })
+  }
+  return {
+    operation: track.keyframeOperation,
+    points: [...points.values()].sort((left, right) => left.frame - right.frame),
+  }
+}
+
+function getTimelineOffset(node: SceneNode, track: ManualKeyframeTrack): number {
+  const animationPreset = (track as ManualKeyframeTrack & {
+    animationPreset?: { timelineOffset?: number }
+  }).animationPreset
+  const timelineOffset = animationPreset?.timelineOffset ?? 0
+  if (!Number.isFinite(timelineOffset) || timelineOffset < 0) {
+    fail(node, 'Motion timelineOffset 必须是非负有限数。')
+  }
+  return timelineOffset
+}
+
+function sampleTracks<T>(
+  node: SceneNode,
+  binding: KeyframeBinding,
+  tracks: PreparedTrack<T>[],
+  baseValue: T,
+  frameRate: number,
+  math: ValueMath<T>,
+): PagProperty<T> {
+  if (!Number.isFinite(binding.timelineDuration) || binding.timelineDuration < 0) {
+    fail(node, 'Motion timelineDuration 必须是非负有限数。')
+  }
+  const lastTrackFrame = Math.max(0, ...tracks.flatMap((track) => track.points.map((point) => point.frame)))
+  const lastFrame = Math.max(Math.round(binding.timelineDuration * frameRate), lastTrackFrame)
+  const samples: T[] = []
+  for (let frame = 0; frame <= lastFrame; frame += 1) {
+    let value = baseValue
+    for (const track of tracks) {
+      const trackValue = evaluateTrack(node, track, frame, math)
+      if (trackValue !== undefined) value = applyOperation(value, trackValue, track.operation, math)
+    }
+    samples.push(value)
+  }
+  if (samples.every((value) => math.equals(value, samples[0]))) return samples[0]
+  return {
+    keyframes: samples.slice(0, -1).map((value, frame) => ({
+      startTime: frame,
+      endTime: frame + 1,
+      startValue: value,
+      endValue: samples[frame + 1],
+      interpolation: 1,
+    })),
+  }
+}
+
+function evaluateTrack<T>(
+  node: SceneNode,
+  track: PreparedTrack<T>,
+  frame: number,
+  math: ValueMath<T>,
+): T | undefined {
+  if (track.points.length === 0 || frame < track.points[0].frame) return undefined
+  const lastPoint = track.points[track.points.length - 1]
+  if (frame >= lastPoint.frame) return lastPoint.value
+  for (let index = 0; index < track.points.length - 1; index += 1) {
+    const start = track.points[index]
+    const end = track.points[index + 1]
+    if (frame > end.frame) continue
+    const progress = (frame - start.frame) / (end.frame - start.frame)
+    return math.interpolate(start.value, end.value, evaluateEasing(node, start.easing, progress))
+  }
+  return lastPoint.value
+}
+
+function applyOperation<T>(
+  baseValue: T,
+  trackValue: T,
+  operation: ManualKeyframeTrack['keyframeOperation'],
+  math: ValueMath<T>,
+): T {
+  if (operation === 'SET') return trackValue
+  if (operation === 'OFFSET') return math.add(baseValue, trackValue)
+  return math.multiply(baseValue, trackValue)
 }
 
 function readEasing(
@@ -273,6 +455,53 @@ function readEasing(
     bezier: Array.from({ length: dimensions }, () => ({
       out: { x: curve.x1, y: curve.y1 },
       in: { x: curve.x2, y: curve.y2 },
+    })),
+  }
+}
+
+function evaluateEasing(
+  node: SceneNode,
+  easing: MotionEasing | VariableAlias | undefined,
+  progress: number,
+): number {
+  if (easing === undefined || easing.type === 'LINEAR') return progress
+  if (easing.type === 'HOLD') return 0
+  readEasing(node, easing, 1)
+  const curve = easing.type === 'CUSTOM_CUBIC_BEZIER' ? easing.easingFunctionCubicBezier : undefined
+  if (curve === undefined) fail(node, 'CUSTOM_CUBIC_BEZIER 缺少控制点。')
+
+  let lower = 0
+  let upper = 1
+  for (let iteration = 0; iteration < 20; iteration += 1) {
+    const parameter = (lower + upper) / 2
+    if (cubicBezierCoordinate(parameter, curve.x1, curve.x2) < progress) {
+      lower = parameter
+    } else {
+      upper = parameter
+    }
+  }
+  return cubicBezierCoordinate((lower + upper) / 2, curve.y1, curve.y2)
+}
+
+function cubicBezierCoordinate(parameter: number, control1: number, control2: number): number {
+  const inverse = 1 - parameter
+  return (
+    3 * inverse * inverse * parameter * control1 +
+    3 * inverse * parameter * parameter * control2 +
+    parameter * parameter * parameter
+  )
+}
+
+function mapPropertyValues<T, U>(
+  property: PagProperty<T>,
+  mapValue: (value: T) => U,
+): PagProperty<U> {
+  if (!isAnimated(property)) return mapValue(property)
+  return {
+    keyframes: property.keyframes.map((keyframe) => ({
+      ...keyframe,
+      startValue: mapValue(keyframe.startValue),
+      endValue: mapValue(keyframe.endValue),
     })),
   }
 }
