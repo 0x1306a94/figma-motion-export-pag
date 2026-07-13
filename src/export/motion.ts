@@ -11,6 +11,8 @@ import type { ExportTransformContext } from './solid'
 
 const supportedFields = new Set([
   'OPACITY',
+  'WIDTH',
+  'HEIGHT',
   'TRANSLATION_X',
   'TRANSLATION_Y',
   'TRANSLATION_XY',
@@ -118,27 +120,64 @@ export function readMotionTransform(
   const scaleXY = readPointBinding(node, 'SCALE_XY', frameRate, warnings)
   const scaleX = readNumberBinding(node, 'SCALE_X', frameRate, warnings)
   const scaleY = readNumberBinding(node, 'SCALE_Y', frameRate, warnings)
+  const staticScale = getStaticPoint(transform.scale, {
+    x: context.scale,
+    y: context.scale * context.orientation,
+  })
+  const width = readSizeBinding(
+    node,
+    'WIDTH',
+    frameRate,
+    warnings,
+    node.width,
+    staticScale.x,
+  )
+  const height = readSizeBinding(
+    node,
+    'HEIGHT',
+    frameRate,
+    warnings,
+    node.height,
+    staticScale.y,
+  )
   if (scaleXY !== undefined && (scaleX !== undefined || scaleY !== undefined)) {
     fail(node, 'SCALE_XY 不能与 SCALE_X/Y 同时使用。')
   }
-  if (scaleX !== undefined && scaleY !== undefined) {
-    fail(node, '当前版本不支持独立的 SCALE_X 与 SCALE_Y 同时动画，请使用 SCALE_XY。')
+  if (
+    (width !== undefined || height !== undefined) &&
+    (scaleXY !== undefined || scaleX !== undefined || scaleY !== undefined)
+  ) {
+    fail(node, 'WIDTH/HEIGHT 不能与 SCALE_X/Y/XY 同时使用。')
   }
-  if (scaleXY !== undefined) {
+  if ((width !== undefined || height !== undefined) && rotation !== undefined) {
+    fail(node, '当前版本不支持 WIDTH/HEIGHT 与 ROTATION 同时动画。')
+  }
+  if (width !== undefined && height !== undefined) {
+    result.scale = combineNumberProperties(width, height)
+  } else if (width !== undefined) {
+    result.scale = numberToPointProperty(width, staticScale.y, true)
+  } else if (height !== undefined) {
+    result.scale = numberToPointProperty(height, staticScale.x, false)
+  } else if (scaleXY !== undefined) {
     result.scale = mapPointProperty(scaleXY, (point) => ({
       x: point.x * context.scale,
       y: point.y * context.scale * context.orientation,
     }))
+  } else if (scaleX !== undefined && scaleY !== undefined) {
+    result.scale = combineNumberProperties(
+      mapNumberProperty(scaleX, context.scale, 0),
+      mapNumberProperty(scaleY, context.scale * context.orientation, 0),
+    )
   } else if (scaleX !== undefined) {
     result.scale = numberToPointProperty(
       mapNumberProperty(scaleX, context.scale, 0),
-      getStaticPoint(transform.scale, { x: context.scale, y: context.scale * context.orientation }).y,
+      staticScale.y,
       true,
     )
   } else if (scaleY !== undefined) {
     result.scale = numberToPointProperty(
       mapNumberProperty(scaleY, context.scale * context.orientation, 0),
-      getStaticPoint(transform.scale, { x: context.scale, y: context.scale * context.orientation }).x,
+      staticScale.x,
       false,
     )
   }
@@ -246,6 +285,58 @@ function mapPointProperty(
   }
 }
 
+function combineNumberProperties(
+  x: PagProperty<number>,
+  y: PagProperty<number>,
+): PagProperty<PagPoint> {
+  if (!isAnimated(x) && !isAnimated(y)) return { x, y }
+  const lastFrame = Math.max(getPropertyLastFrame(x), getPropertyLastFrame(y))
+  const samples = Array.from({ length: lastFrame + 1 }, (_, frame) => ({
+    x: evaluateNumberProperty(x, frame),
+    y: evaluateNumberProperty(y, frame),
+  }))
+  if (samples.every((value) => pointMath.equals(value, samples[0]))) return samples[0]
+  return {
+    keyframes: samples.slice(0, -1).map((value, frame) => ({
+      startTime: frame,
+      endTime: frame + 1,
+      startValue: value,
+      endValue: samples[frame + 1],
+      interpolation: 1,
+    })),
+  }
+}
+
+function getPropertyLastFrame(property: PagProperty<number>): number {
+  if (!isAnimated(property) || property.keyframes.length === 0) return 0
+  return property.keyframes[property.keyframes.length - 1].endTime
+}
+
+function evaluateNumberProperty(property: PagProperty<number>, frame: number): number {
+  if (!isAnimated(property) || property.keyframes.length === 0) return property as number
+  let value = property.keyframes[0].startValue
+  for (const keyframe of property.keyframes) {
+    if (frame < keyframe.startTime) return value
+    if (frame > keyframe.endTime) {
+      value = keyframe.endValue
+      continue
+    }
+    if (frame === keyframe.endTime) return keyframe.endValue
+    if (keyframe.interpolation === 3) return keyframe.startValue
+    const progress = (frame - keyframe.startTime) / (keyframe.endTime - keyframe.startTime)
+    if (keyframe.interpolation === 1 || keyframe.bezier === undefined) {
+      return numberMath.interpolate(keyframe.startValue, keyframe.endValue, progress)
+    }
+    const curve = keyframe.bezier[0]
+    return numberMath.interpolate(
+      keyframe.startValue,
+      keyframe.endValue,
+      evaluateCubicBezier(progress, curve.out.x, curve.out.y, curve.in.x, curve.in.y),
+    )
+  }
+  return value
+}
+
 function readNumberBinding(
   node: SceneNode,
   field: KeyframePropertyFieldName,
@@ -279,6 +370,22 @@ function readPointBinding(
     }
     return { x: value.value.x, y: value.value.y }
   }, pointMath, dimensions)
+}
+
+function readSizeBinding(
+  node: SceneNode,
+  field: 'WIDTH' | 'HEIGHT',
+  frameRate: number,
+  warnings: ExportIssue[],
+  staticSize: number,
+  staticScale: number,
+): PagProperty<number> | undefined {
+  if (node.animations[field] === undefined) return undefined
+  if (staticSize <= 0) fail(node, `${field} 动画要求节点静态尺寸大于 0。`)
+  return readNumberBinding(node, field, frameRate, warnings, (value) => {
+    if (value < 0) fail(node, `${field} 动画尺寸不能小于 0。`)
+    return (value / staticSize) * staticScale
+  })
 }
 
 function readBinding<T>(
@@ -470,17 +577,27 @@ function evaluateEasing(
   const curve = easing.type === 'CUSTOM_CUBIC_BEZIER' ? easing.easingFunctionCubicBezier : undefined
   if (curve === undefined) fail(node, 'CUSTOM_CUBIC_BEZIER 缺少控制点。')
 
+  return evaluateCubicBezier(progress, curve.x1, curve.y1, curve.x2, curve.y2)
+}
+
+function evaluateCubicBezier(
+  progress: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): number {
   let lower = 0
   let upper = 1
   for (let iteration = 0; iteration < 20; iteration += 1) {
     const parameter = (lower + upper) / 2
-    if (cubicBezierCoordinate(parameter, curve.x1, curve.x2) < progress) {
+    if (cubicBezierCoordinate(parameter, x1, x2) < progress) {
       lower = parameter
     } else {
       upper = parameter
     }
   }
-  return cubicBezierCoordinate((lower + upper) / 2, curve.y1, curve.y2)
+  return cubicBezierCoordinate((lower + upper) / 2, y1, y2)
 }
 
 function cubicBezierCoordinate(parameter: number, control1: number, control2: number): number {
