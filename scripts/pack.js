@@ -5,7 +5,7 @@ const { join } = require('path');
 const root = join(__dirname, '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const version = pkg.version;
-const bundleName = `figma-motion-export-pagx-${version}`;
+const bundleName = `figma-motion-export-pag-${version}`;
 const distDir = join(root, 'dist');
 const outDir = join(distDir, bundleName);
 const zipPath = join(distDir, `${bundleName}.zip`);
@@ -27,7 +27,7 @@ for (const file of copyFiles) {
   cpSync(join(root, file), join(outDir, file));
 }
 
-const readme = `Figma Motion to PAGX / PAG (Beta) v${version}
+const readme = `Figma Motion to PAG (Beta) v${version}
 
 Install:
 1. Unzip this archive if needed.
@@ -35,7 +35,7 @@ Install:
 3. Go to Plugins → Development → Import plugin from manifest…
 4. Select manifest.json in this folder.
 
-Source: https://github.com/0x1306a94/figma-motion-export-pagx
+Source: https://github.com/0x1306a94/figma-motion-export-pag
 `;
 
 writeFileSync(join(outDir, 'README.txt'), readme, 'utf8');
