@@ -1,9 +1,15 @@
 import { encodePagFile } from './pag/encode-file'
-import type { PagColor, PagImage, PagLayer } from './pag/types'
+import type { PagImage, PagLayer, PagSolidLayer } from './pag/types'
 import { readImageNode } from './image'
 import { readMotionTransform } from './motion'
 import { readShapeNode } from './shape'
-import { hasSolidMarker, readNodeTransform, readSolidNode, toPagColor } from './solid'
+import {
+  createExportTransformContext,
+  hasSolidMarker,
+  readNodeTransform,
+  readSolidNode,
+  toPagColor,
+} from './solid'
 import { ExportError } from './types'
 import type { ExportOptions } from './types'
 
@@ -30,6 +36,7 @@ export async function exportSelection(
   }
   const durationSeconds = root.timelines[0]?.duration ?? 1 / options.frameRate
   const duration = Math.max(1, Math.round(durationSeconds * options.frameRate))
+  const transformContext = createExportTransformContext(root)
   const layers: PagLayer[] = []
   const warnings: ExportResult['warnings'] = []
   const imagesByHash = new Map<string, Promise<PagImage>>()
@@ -39,7 +46,7 @@ export async function exportSelection(
   const visit = async (node: SceneNode): Promise<void> => {
     if (!node.visible) return
     validateLayerNode(node)
-    const solid = readSolidNode(node, nextId, duration, root)
+    const solid = readSolidNode(node, nextId, duration, transformContext)
     if (solid !== null) {
       solid.transform = readMotionTransform(
         node,
@@ -47,13 +54,14 @@ export async function exportSelection(
         options.frameRate,
         solid.transform,
         warnings,
+        transformContext,
         readPaintOpacity(node),
       )
       nextId += 1
       layers.push(solid)
       return
     }
-    const nodeTransform = readNodeTransform(node, root)
+    const nodeTransform = readNodeTransform(node, transformContext)
     const image = await readImageNode(node, nextId, duration, nodeTransform, {
       options,
       imagesByHash,
@@ -68,6 +76,7 @@ export async function exportSelection(
         options.frameRate,
         image.transform,
         warnings,
+        transformContext,
         readPaintOpacity(node),
       )
       nextId += 1
@@ -76,7 +85,14 @@ export async function exportSelection(
     }
     const shape = readShapeNode(node, nextId, duration, nodeTransform)
     if (shape !== null) {
-      shape.transform = readMotionTransform(node, root, options.frameRate, shape.transform, warnings)
+      shape.transform = readMotionTransform(
+        node,
+        root,
+        options.frameRate,
+        shape.transform,
+        warnings,
+        transformContext,
+      )
       nextId += 1
       layers.push(shape)
       return
@@ -105,15 +121,24 @@ export async function exportSelection(
   }
 
   for (const child of root.children) await visit(child)
+  layers.reverse()
+  const background = readRootBackgroundLayer(
+    root,
+    nextId,
+    duration,
+    transformContext.width,
+    transformContext.height,
+  )
+  if (background !== null) layers.push(background)
   if (layers.length === 0) throw new ExportError([{ message: '所选 Frame 中没有可导出的图层。' }])
 
   const bytes = encodePagFile({
     id: 1,
-    width: Math.max(1, Math.round(root.width)),
-    height: Math.max(1, Math.round(root.height)),
+    width: transformContext.width,
+    height: transformContext.height,
     duration,
     frameRate: options.frameRate,
-    backgroundColor: readBackgroundColor(root),
+    backgroundColor: background?.color ?? { red: 255, green: 255, blue: 255 },
     images: await Promise.all(imagesByHash.values()),
     layers,
   })
@@ -183,14 +208,42 @@ function readPaintOpacity(node: SceneNode): number {
   return fill?.opacity ?? 1
 }
 
-function readBackgroundColor(root: FrameNode): PagColor {
-  if (root.fills !== figma.mixed) {
-    const fills = root.fills.filter((paint) => paint.visible !== false)
-    if (fills.length === 1 && fills[0].type === 'SOLID' && (fills[0].opacity ?? 1) === 1) {
-      return toPagColor(fills[0].color)
-    }
+export function readRootBackgroundLayer(
+  root: FrameNode,
+  id: number,
+  duration: number,
+  width: number,
+  height: number,
+): PagSolidLayer | null {
+  if (root.fills === figma.mixed) {
+    throw new ExportError([{ nodeId: root.id, nodeName: root.name, message: '根 Frame 不能使用混合填充。' }])
   }
-  return { red: 255, green: 255, blue: 255 }
+  const fills = root.fills.filter((paint) => paint.visible !== false)
+  if (fills.length === 0) return null
+  if (fills.length !== 1 || fills[0].type !== 'SOLID') {
+    throw new ExportError([
+      {
+        nodeId: root.id,
+        nodeName: root.name,
+        message: '当前版本仅支持根 Frame 使用一个可见纯色填充，渐变填充暂未实现。',
+      },
+    ])
+  }
+  const fill = fills[0]
+  if ((fill.blendMode ?? 'NORMAL') !== 'NORMAL') {
+    throw new ExportError([{ nodeId: root.id, nodeName: root.name, message: '根 Frame 填充不能使用混合模式。' }])
+  }
+  return {
+    type: 'solid',
+    id,
+    name: `${root.name} Background`,
+    startTime: 0,
+    duration,
+    width,
+    height,
+    color: toPagColor(fill.color),
+    transform: { opacity: Math.round(root.opacity * (fill.opacity ?? 1) * 255) },
+  }
 }
 
 function safeFileName(name: string): string {

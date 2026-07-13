@@ -7,6 +7,7 @@ import type {
 } from './pag/types'
 import type { ExportIssue } from './types'
 import { ExportError } from './types'
+import type { ExportTransformContext } from './solid'
 
 const supportedFields = new Set([
   'OPACITY',
@@ -25,6 +26,7 @@ export function readMotionTransform(
   frameRate: number,
   transform: PagTransform,
   warnings: ExportIssue[],
+  context: ExportTransformContext,
   opacityMultiplier = 1,
 ): PagTransform {
   const animationFields = Object.keys(node.animations).filter(
@@ -43,18 +45,28 @@ export function readMotionTransform(
     fail(node, 'TRANSLATION_XY 不能与 TRANSLATION_X/Y 同时使用。')
   }
   if (positionXY !== undefined) {
-    result.position = positionXY
+    result.position = mapPointProperty(positionXY, (point) => mapPosition(point, context))
     result.xPosition = undefined
     result.yPosition = undefined
   } else if (positionX !== undefined || positionY !== undefined) {
-    const staticPosition = getStaticPoint(transform.position, { x: node.x, y: node.y })
+    const staticPosition = {
+      x: node.relativeTransform[0][2],
+      y: node.relativeTransform[1][2],
+    }
+    const mappedPosition = mapSeparatedPosition(
+      positionX ?? staticPosition.x,
+      positionY ?? staticPosition.y,
+      context,
+    )
     result.position = undefined
-    result.xPosition = positionX ?? staticPosition.x
-    result.yPosition = positionY ?? staticPosition.y
+    result.xPosition = mappedPosition.x
+    result.yPosition = mappedPosition.y
   }
 
   const rotation = readNumberBinding(node, 'ROTATION', frameRate, warnings)
-  if (rotation !== undefined) result.rotation = rotation
+  if (rotation !== undefined) {
+    result.rotation = mapNumberProperty(rotation, context.orientation, context.rotation)
+  }
   const opacity = readNumberBinding(
     node,
     'OPACITY',
@@ -77,13 +89,84 @@ export function readMotionTransform(
     fail(node, '当前版本不支持独立的 SCALE_X 与 SCALE_Y 同时动画，请使用 SCALE_XY。')
   }
   if (scaleXY !== undefined) {
-    result.scale = scaleXY
+    result.scale = mapPointProperty(scaleXY, (point) => ({
+      x: point.x * context.scale,
+      y: point.y * context.scale * context.orientation,
+    }))
   } else if (scaleX !== undefined) {
-    result.scale = numberToPointProperty(scaleX, getStaticPoint(transform.scale, { x: 1, y: 1 }).y, true)
+    result.scale = numberToPointProperty(
+      mapNumberProperty(scaleX, context.scale, 0),
+      getStaticPoint(transform.scale, { x: context.scale, y: context.scale * context.orientation }).y,
+      true,
+    )
   } else if (scaleY !== undefined) {
-    result.scale = numberToPointProperty(scaleY, getStaticPoint(transform.scale, { x: 1, y: 1 }).x, false)
+    result.scale = numberToPointProperty(
+      mapNumberProperty(scaleY, context.scale * context.orientation, 0),
+      getStaticPoint(transform.scale, { x: context.scale, y: context.scale * context.orientation }).x,
+      false,
+    )
   }
   return result
+}
+
+function mapPosition(point: PagPoint, context: ExportTransformContext): PagPoint {
+  const transform = context.rootToExportTransform
+  return {
+    x: transform[0][0] * point.x + transform[0][1] * point.y + transform[0][2],
+    y: transform[1][0] * point.x + transform[1][1] * point.y + transform[1][2],
+  }
+}
+
+function mapSeparatedPosition(
+  x: PagProperty<number>,
+  y: PagProperty<number>,
+  context: ExportTransformContext,
+): { x: PagProperty<number>; y: PagProperty<number> } {
+  const transform = context.rootToExportTransform
+  return {
+    x: mapAxisProperty(x, y, transform[0][0], transform[0][1], transform[0][2]),
+    y: mapAxisProperty(x, y, transform[1][0], transform[1][1], transform[1][2]),
+  }
+}
+
+function mapAxisProperty(
+  x: PagProperty<number>,
+  y: PagProperty<number>,
+  xFactor: number,
+  yFactor: number,
+  offset: number,
+): PagProperty<number> {
+  if (Math.abs(xFactor) > 0.0001) return mapNumberProperty(x, xFactor, offset)
+  return mapNumberProperty(y, yFactor, offset)
+}
+
+function mapNumberProperty(
+  property: PagProperty<number>,
+  factor: number,
+  offset: number,
+): PagProperty<number> {
+  if (!isAnimated(property)) return property * factor + offset
+  return {
+    keyframes: property.keyframes.map((keyframe) => ({
+      ...keyframe,
+      startValue: keyframe.startValue * factor + offset,
+      endValue: keyframe.endValue * factor + offset,
+    })),
+  }
+}
+
+function mapPointProperty(
+  property: PagProperty<PagPoint>,
+  mapValue: (value: PagPoint) => PagPoint,
+): PagProperty<PagPoint> {
+  if (!isAnimated(property)) return mapValue(property)
+  return {
+    keyframes: property.keyframes.map((keyframe) => ({
+      ...keyframe,
+      startValue: mapValue(keyframe.startValue),
+      endValue: mapValue(keyframe.endValue),
+    })),
+  }
 }
 
 function readNumberBinding(

@@ -3,6 +3,16 @@ import type { PagColor, PagSolidLayer, PagTransform } from './pag/types'
 
 const solidMarkerPattern = /^#solid(?:\s|$)/
 
+export interface ExportTransformContext {
+  width: number
+  height: number
+  absoluteToExportTransform: Transform
+  rootToExportTransform: Transform
+  scale: number
+  orientation: 1 | -1
+  rotation: number
+}
+
 export function hasSolidMarker(name: string): boolean {
   return solidMarkerPattern.test(name)
 }
@@ -11,7 +21,7 @@ export function readSolidNode(
   node: SceneNode,
   id: number,
   duration: number,
-  root: FrameNode,
+  context: ExportTransformContext,
 ): PagSolidLayer | null {
   if (!hasSolidMarker(node.name)) return null
   const fail = (message: string): never => {
@@ -54,14 +64,57 @@ export function readSolidNode(
     height: Math.max(1, Math.round(rectangle.height)),
     color: toPagColor(fill.color),
     transform: {
-      ...readNodeTransform(node, root),
+      ...readNodeTransform(node, context),
       opacity: Math.round(rectangle.opacity * fillOpacity * 255),
     },
   }
 }
 
-export function readNodeTransform(node: SceneNode, root: FrameNode): PagTransform {
-  const transform = multiplyTransform(invertTransform(root.absoluteTransform), node.absoluteTransform)
+export function createExportTransformContext(root: FrameNode): ExportTransformContext {
+  const bounds = root.absoluteBoundingBox
+  if (bounds === null) {
+    throw new ExportError([{ nodeId: root.id, nodeName: root.name, message: '无法读取所选 Frame 的边界。' }])
+  }
+  const transform = root.absoluteTransform
+  const scaleX = Math.hypot(transform[0][0], transform[1][0])
+  const scaleY = Math.hypot(transform[0][1], transform[1][1])
+  const dotProduct = transform[0][0] * transform[0][1] + transform[1][0] * transform[1][1]
+  const rotation = Math.atan2(transform[1][0], transform[0][0])
+  const quarterTurn = Math.round(rotation / (Math.PI / 2)) * (Math.PI / 2)
+  if (
+    scaleX === 0 ||
+    scaleY === 0 ||
+    Math.abs(dotProduct / (scaleX * scaleY)) > 0.0001 ||
+    Math.abs(scaleX - scaleY) / Math.max(scaleX, scaleY) > 0.0001 ||
+    Math.abs(rotation - quarterTurn) > 0.0001
+  ) {
+    throw new ExportError([
+      {
+        nodeId: root.id,
+        nodeName: root.name,
+        message: '当前版本仅支持等比缩放及 90° 倍数旋转或翻转的顶层 Frame。',
+      },
+    ])
+  }
+  const absoluteToExportTransform: Transform = [
+    [1, 0, -bounds.x],
+    [0, 1, -bounds.y],
+  ]
+  const determinant =
+    transform[0][0] * transform[1][1] - transform[0][1] * transform[1][0]
+  return {
+    width: Math.max(1, Math.round(bounds.width)),
+    height: Math.max(1, Math.round(bounds.height)),
+    absoluteToExportTransform,
+    rootToExportTransform: multiplyTransform(absoluteToExportTransform, transform),
+    scale: scaleX,
+    orientation: determinant < 0 ? -1 : 1,
+    rotation: (quarterTurn * 180) / Math.PI,
+  }
+}
+
+export function readNodeTransform(node: SceneNode, context: ExportTransformContext): PagTransform {
+  const transform = multiplyTransform(context.absoluteToExportTransform, node.absoluteTransform)
   const scaleX = Math.hypot(transform[0][0], transform[1][0])
   const scaleY = Math.hypot(transform[0][1], transform[1][1])
   const dotProduct = transform[0][0] * transform[0][1] + transform[1][0] * transform[1][1]
@@ -77,21 +130,6 @@ export function readNodeTransform(node: SceneNode, root: FrameNode): PagTransfor
     scale: { x: scaleX, y: determinant < 0 ? -scaleY : scaleY },
     rotation: (Math.atan2(transform[1][0], transform[0][0]) * 180) / Math.PI,
   }
-}
-
-function invertTransform(transform: Transform): Transform {
-  const determinant = transform[0][0] * transform[1][1] - transform[0][1] * transform[1][0]
-  if (Math.abs(determinant) < 0.000001) {
-    throw new ExportError([{ message: '所选 Frame 的变换不可逆。' }])
-  }
-  const first = transform[1][1] / determinant
-  const second = -transform[1][0] / determinant
-  const third = -transform[0][1] / determinant
-  const fourth = transform[0][0] / determinant
-  return [
-    [first, third, -(first * transform[0][2] + third * transform[1][2])],
-    [second, fourth, -(second * transform[0][2] + fourth * transform[1][2])],
-  ]
 }
 
 function multiplyTransform(left: Transform, right: Transform): Transform {
