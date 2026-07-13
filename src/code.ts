@@ -6,7 +6,13 @@ import {
   setMotionAnchorCache,
 } from './export/motion'
 import { ExportError } from './export/types'
-import type { AnimationDebugData, AnimationDebugNode, PluginMessage, UiMessage } from './export/types'
+import type {
+  AnimationDebugData,
+  AnimationDebugNode,
+  PluginMessage,
+  TextSvgMetrics,
+  UiMessage,
+} from './export/types'
 
 const defaultUiHeight = 430
 const developerUiHeight = 720
@@ -16,9 +22,14 @@ figma.showUI(__html__, { width: 360, height: defaultUiHeight })
 let cancelled = false
 let developerModeEnabled = false
 let nextWebPRequestId = 1
+let nextTextSvgRequestId = 1
 const webPRequests = new Map<
   number,
   { resolve: (bytes: Uint8Array) => void; reject: (error: Error) => void }
+>()
+const textSvgRequests = new Map<
+  number,
+  { resolve: (metrics: TextSvgMetrics) => void; reject: (error: Error) => void }
 >()
 
 figma.ui.onmessage = async (message: PluginMessage) => {
@@ -55,10 +66,23 @@ figma.ui.onmessage = async (message: PluginMessage) => {
     }
     return
   }
+  if (message.type === 'text-svg-result') {
+    const request = textSvgRequests.get(message.requestId)
+    if (request === undefined) return
+    textSvgRequests.delete(message.requestId)
+    if (message.error !== undefined || message.metrics === undefined) {
+      request.reject(new Error(message.error ?? 'SVG 文本基线解析失败。'))
+    } else {
+      request.resolve(message.metrics)
+    }
+    return
+  }
   if (message.type === 'cancel') {
     cancelled = true
     for (const request of webPRequests.values()) request.reject(new Error('导出已取消。'))
+    for (const request of textSvgRequests.values()) request.reject(new Error('导出已取消。'))
     webPRequests.clear()
+    textSvgRequests.clear()
     return
   }
   if (message.type !== 'start-export') return
@@ -66,7 +90,12 @@ figma.ui.onmessage = async (message: PluginMessage) => {
   cancelled = false
   postMessage({ type: 'progress', message: '正在读取图层…' })
   try {
-    const result = await exportSelection(figma.currentPage.selection, message.options, encodeWebP)
+    const result = await exportSelection(
+      figma.currentPage.selection,
+      message.options,
+      encodeWebP,
+      parseTextSvg,
+    )
     if (cancelled) return
     postMessage({
       type: 'complete',
@@ -138,6 +167,14 @@ function encodeWebP(source: Uint8Array, mimeType: string, quality: number): Prom
   return new Promise((resolve, reject) => {
     webPRequests.set(requestId, { resolve, reject })
     postMessage({ type: 'encode-webp', requestId, bytes: source, mimeType, quality })
+  })
+}
+
+function parseTextSvg(bytes: Uint8Array): Promise<TextSvgMetrics> {
+  const requestId = nextTextSvgRequestId++
+  return new Promise((resolve, reject) => {
+    textSvgRequests.set(requestId, { resolve, reject })
+    postMessage({ type: 'parse-text-svg', requestId, bytes })
   })
 }
 

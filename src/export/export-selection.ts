@@ -18,7 +18,7 @@ import {
   toPagColor,
 } from './solid'
 import { ExportError } from './types'
-import type { ExportOptions } from './types'
+import type { ExportOptions, TextSvgMetrics } from './types'
 import { readMaskMatte } from './mask'
 import type { FigmaMaskNode } from './mask'
 import { readTextNode } from './text'
@@ -35,6 +35,7 @@ export async function exportSelection(
   selection: readonly SceneNode[],
   options: ExportOptions,
   encodeWebP: (source: Uint8Array, mimeType: string, quality: number) => Promise<Uint8Array>,
+  parseTextSvg?: (bytes: Uint8Array) => Promise<TextSvgMetrics>,
 ): Promise<ExportResult> {
   if (selection.length !== 1) {
     throw new ExportError([{ message: '请选择一个节点后再导出。' }])
@@ -187,7 +188,14 @@ export async function exportSelection(
     if (!node.visible) return
     if (node.type === 'TEXT') {
       validateLayerNode(node)
-      const text = readTextNode(node, nextId, duration, transformContext, warnings)
+      const text = await readTextNode(
+        node,
+        nextId,
+        duration,
+        transformContext,
+        warnings,
+        parseTextSvg,
+      )
       text.effects = readLayerEffects(node, options.frameRate, warnings)
       text.transform = readMotionTransform(
         node,

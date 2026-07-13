@@ -12,6 +12,10 @@ export interface ExportIssue {
   message: string
 }
 
+export interface TextSvgMetrics {
+  baselines: number[]
+}
+
 export interface AnimationDebugNode {
   id: string
   name: string
@@ -57,6 +61,7 @@ export type PluginMessage =
   | { type: 'set-motion-anchor'; x: number; y: number }
   | { type: 'clear-motion-anchor' }
   | { type: 'webp-result'; requestId: number; bytes?: Uint8Array; error?: string }
+  | { type: 'text-svg-result'; requestId: number; metrics?: TextSvgMetrics; error?: string }
 
 export type UiMessage =
   | {
@@ -75,6 +80,7 @@ export type UiMessage =
       mimeType: string
       quality: number
     }
+  | { type: 'parse-text-svg'; requestId: number; bytes: Uint8Array }
   | { type: 'error'; issues: ExportIssue[] }
   | { type: 'animation-debug-data'; data: AnimationDebugData }
   | { type: 'animation-debug-error'; message: string }

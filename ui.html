@@ -225,6 +225,8 @@
         setExporting(false)
       } else if (message.type === 'encode-webp') {
         await encodeWebp(message)
+      } else if (message.type === 'parse-text-svg') {
+        parseTextSvg(message)
       } else if (message.type === 'animation-debug-data') {
         developerOutput.value = JSON.stringify(message.data, null, 2)
         developerStatus.className = 'developer-status'
@@ -284,6 +286,41 @@
       } catch (error) {
         parent.postMessage({
           pluginMessage: { type: 'webp-result', requestId: message.requestId, error: String(error) },
+        }, '*')
+      }
+    }
+
+    function parseTextSvg(message) {
+      try {
+        const source = new TextDecoder().decode(message.bytes)
+        const documentNode = new DOMParser().parseFromString(source, 'image/svg+xml')
+        if (documentNode.querySelector('parsererror')) throw new Error('SVG 格式无效。')
+        const elements = Array.from(documentNode.querySelectorAll('tspan[y]'))
+        if (elements.length === 0) elements.push(...documentNode.querySelectorAll('text[y]'))
+        const baselines = []
+        for (const element of elements) {
+          let current = element
+          while (current && current !== documentNode.documentElement) {
+            if (current.hasAttribute('transform')) throw new Error('暂不支持带 transform 的 SVG 文本。')
+            current = current.parentElement
+          }
+          const value = Number.parseFloat(element.getAttribute('y'))
+          if (!Number.isFinite(value)) continue
+          if (baselines.every((baseline) => Math.abs(baseline - value) > 0.001)) {
+            baselines.push(value)
+          }
+        }
+        if (baselines.length === 0) throw new Error('SVG 中没有文字基线。')
+        parent.postMessage({
+          pluginMessage: {
+            type: 'text-svg-result',
+            requestId: message.requestId,
+            metrics: { baselines },
+          },
+        }, '*')
+      } catch (error) {
+        parent.postMessage({
+          pluginMessage: { type: 'text-svg-result', requestId: message.requestId, error: String(error) },
         }, '*')
       }
     }

@@ -1,6 +1,6 @@
 import { readNodeTransform } from './solid'
 import type { ExportTransformContext } from './solid'
-import type { ExportIssue } from './types'
+import type { ExportIssue, TextSvgMetrics } from './types'
 import {
   ParagraphJustification,
   type PagColor,
@@ -11,6 +11,11 @@ import {
 
 const black: PagColor = { red: 0, green: 0, blue: 0 }
 const firstBaselineFactor = 0.8
+
+interface TextLayoutMetrics {
+  firstBaseline: number
+  leading: number
+}
 
 export function textLayoutModeFromAutoResize(autoResize: string): 'point' | 'box' {
   return autoResize === 'WIDTH_AND_HEIGHT' ? 'point' : 'box'
@@ -44,11 +49,11 @@ function trackingFromLetterSpacing(
   return letterSpacing.value * 10
 }
 
-function pointPosition(node: TextNode, context: ExportTransformContext, fontSize: number): PagPoint {
+function pointPosition(node: TextNode, context: ExportTransformContext, firstBaseline: number): PagPoint {
   let offsetX = 0
   if (node.textAlignHorizontal === 'CENTER') offsetX = node.width / 2
   else if (node.textAlignHorizontal === 'RIGHT') offsetX = node.width
-  const offsetY = estimateFirstBaseline(fontSize)
+  const offsetY = firstBaseline
   const transform = node.absoluteTransform
   const absolutePoint = {
     x: transform[0][0] * offsetX + transform[0][1] * offsetY + transform[0][2],
@@ -78,7 +83,11 @@ function readFill(node: TextNode): { color: PagColor; opacity: number } {
   }
 }
 
-export function buildTextDocument(node: TextNode, warnings: ExportIssue[]): PagTextDocument {
+export function buildTextDocument(
+  node: TextNode,
+  warnings: ExportIssue[],
+  metrics?: TextLayoutMetrics,
+): PagTextDocument {
   const mixedFont = node.fontName === figma.mixed
   const mixedSize = node.fontSize === figma.mixed
   const fontName: FontName = mixedFont
@@ -89,9 +98,6 @@ export function buildTextDocument(node: TextNode, warnings: ExportIssue[]): PagT
   if (mixedFont || mixedSize) {
     warnings.push({ nodeId: node.id, nodeName: node.name, message: '文本含混合样式，已取默认值。' })
   }
-  if (node.textAlignVertical === 'BOTTOM') {
-    warnings.push({ nodeId: node.id, nodeName: node.name, message: 'PAG 框文本无底对齐，已按默认规则导出。' })
-  }
   const fill = readFill(node)
   return {
     applyFill: true,
@@ -101,7 +107,9 @@ export function buildTextDocument(node: TextNode, warnings: ExportIssue[]): PagT
     fauxItalic: false,
     strokeOverFill: true,
     baselineShift: 0,
-    firstBaseLine: mode === 'box' ? estimateFirstBaseline(fontSize) : 0,
+    firstBaseLine: mode === 'box'
+      ? metrics?.firstBaseline ?? estimateFirstBaseline(fontSize)
+      : 0,
     boxTextPos: { x: 0, y: 0 },
     boxTextSize: mode === 'box' ? { x: node.width, y: node.height } : { x: 0, y: 0 },
     fillColor: fill.color,
@@ -110,26 +118,28 @@ export function buildTextDocument(node: TextNode, warnings: ExportIssue[]): PagT
     strokeWidth: 1,
     text: node.characters,
     justification: justificationFromAlign(node.textAlignHorizontal),
-    leading: leadingFromLineHeight(node.lineHeight, fontSize),
+    leading: metrics?.leading ?? leadingFromLineHeight(node.lineHeight, fontSize),
     tracking: trackingFromLetterSpacing(node.letterSpacing, fontSize),
     fontFamily: fontName.family,
     fontStyle: fontName.style || 'Regular',
   }
 }
 
-export function readTextNode(
+export async function readTextNode(
   node: TextNode,
   id: number,
   duration: number,
   context: ExportTransformContext,
   warnings: ExportIssue[],
-): PagTextLayer {
-  const sourceText = buildTextDocument(node, warnings)
+  parseTextSvg?: (bytes: Uint8Array) => Promise<TextSvgMetrics>,
+): Promise<PagTextLayer> {
+  const metrics = await readTextLayoutMetrics(node, warnings, parseTextSvg)
+  const sourceText = buildTextDocument(node, warnings, metrics)
   const fill = readFill(node)
   const transform = readNodeTransform(node, context)
   if (!sourceText.boxText) {
     transform.anchorPoint = { x: 0, y: 0 }
-    transform.position = pointPosition(node, context, sourceText.fontSize)
+    transform.position = pointPosition(node, context, metrics.firstBaseline)
   }
   transform.opacity = Math.round(node.opacity * fill.opacity * 255)
   return {
@@ -140,5 +150,50 @@ export function readTextNode(
     duration,
     transform,
     sourceText,
+  }
+}
+
+async function readTextLayoutMetrics(
+  node: TextNode,
+  warnings: ExportIssue[],
+  parseTextSvg?: (bytes: Uint8Array) => Promise<TextSvgMetrics>,
+): Promise<TextLayoutMetrics> {
+  const fontSize = node.fontSize === figma.mixed ? 12 : node.fontSize as number
+  const fallback = {
+    firstBaseline: estimateFirstBaseline(fontSize),
+    leading: leadingFromLineHeight(node.lineHeight, fontSize),
+  }
+  if (parseTextSvg === undefined) return fallback
+
+  try {
+    const renderBounds = node.absoluteRenderBounds
+    const transform = node.absoluteTransform
+    if (
+      renderBounds === null
+      || Math.abs(transform[0][1]) > 0.000001
+      || Math.abs(transform[1][0]) > 0.000001
+      || transform[1][1] <= 0
+    ) {
+      throw new Error('文本包含旋转、斜切或不可用的渲染边界')
+    }
+    const bytes = await node.exportAsync({ format: 'SVG', svgOutlineText: false })
+    const parsed = await parseTextSvg(bytes)
+    if (parsed.baselines.length === 0 || !parsed.baselines.every(Number.isFinite)) {
+      throw new Error('SVG 中没有有效基线')
+    }
+    const renderTop = (renderBounds.y - transform[1][2]) / transform[1][1]
+    return {
+      firstBaseline: renderTop + parsed.baselines[0],
+      leading: parsed.baselines.length > 1
+        ? parsed.baselines[1] - parsed.baselines[0]
+        : fallback.leading,
+    }
+  } catch {
+    warnings.push({
+      nodeId: node.id,
+      nodeName: node.name,
+      message: '未能读取 Figma 实际文字基线，已使用估算值。',
+    })
+    return fallback
   }
 }
