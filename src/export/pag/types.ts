@@ -82,8 +82,13 @@ export interface PagPathCommand {
 }
 
 export type PagShapeGeometry =
-  | { type: 'rectangle'; size: PagPoint; position: PagPoint; roundness: number }
-  | { type: 'ellipse'; size: PagPoint; position: PagPoint }
+  | {
+      type: 'rectangle'
+      size: PagProperty<PagPoint>
+      position: PagProperty<PagPoint>
+      roundness: number
+    }
+  | { type: 'ellipse'; size: PagProperty<PagPoint>; position: PagProperty<PagPoint> }
   | { type: 'path'; commands: PagPathCommand[] }
 
 export interface PagShapePaint {

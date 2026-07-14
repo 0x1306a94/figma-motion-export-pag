@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   composeAncestorMotionTransform,
   readMotionAnchor,
+  readShapeMotion,
   readMotionTransform,
   refreshMotionAnchorCache,
 } from '../src/export/motion'
@@ -700,6 +701,92 @@ test('WIDTH/HEIGHT 尺寸比例与 SCALE 动画逐帧相乘', () => {
   assert.deepEqual(scale.keyframes[scale.keyframes.length - 1].endValue, { x: 2, y: 3 })
 })
 
+test('Shape WIDTH 动画修改矩形几何但不缩放渐变', () => {
+  const root = {}
+  const node = {
+    id: '50:48',
+    name: '下球线蒙版',
+    parent: root,
+    width: 4,
+    height: 100,
+    opacity: 1,
+    animations: {
+      WIDTH: {
+        baseValue: { type: 'FLOAT', value: 4 },
+        timelineDuration: 1,
+        tracks: [{
+          id: 'width',
+          keyframeOperation: 'SET',
+          keyframes: [
+            {
+              id: 'width-start',
+              timelinePosition: 0,
+              easing: { type: 'LINEAR' },
+              value: { type: 'FLOAT', value: 4 },
+            },
+            {
+              id: 'width-end',
+              timelinePosition: 1,
+              easing: { type: 'LINEAR' },
+              value: { type: 'FLOAT', value: 80 },
+            },
+          ],
+        }],
+      },
+    },
+    relativeTransform: [
+      [1, 0, 10],
+      [0, 1, 20],
+    ],
+  }
+  const layer = readShapeMotion(
+    node as unknown as SceneNode,
+    root as FrameNode,
+    2,
+    {
+      type: 'shape',
+      id: 2,
+      name: '下球线蒙版',
+      startTime: 0,
+      duration: 2,
+      transform: { position: { x: 10, y: 20 }, scale: { x: 1, y: 1 } },
+      geometry: {
+        type: 'rectangle',
+        size: { x: 4, y: 100 },
+        position: { x: 2, y: 50 },
+        roundness: 0,
+      },
+      fill: {
+        kind: 'gradient',
+        fillType: 0,
+        startPoint: { x: 0.2, y: 50 },
+        endPoint: { x: 3.4, y: 50 },
+        colors: { alphaStops: [], colorStops: [] },
+        opacity: 255,
+      },
+      fillRule: 0,
+    },
+    [],
+    identityContext,
+  )
+  assert.deepEqual(layer.transform.scale, { x: 1, y: 1 })
+  assert.deepEqual(layer.fill && 'kind' in layer.fill ? layer.fill.endPoint : undefined, {
+    x: 3.4,
+    y: 50,
+  })
+  if (layer.geometry.type !== 'rectangle') return
+  const size = layer.geometry.size as {
+    keyframes: Array<{ startValue: PagPoint; endValue: PagPoint }>
+  }
+  const position = layer.geometry.position as {
+    keyframes: Array<{ startValue: PagPoint; endValue: PagPoint }>
+  }
+  assert.deepEqual(size.keyframes[0].startValue, { x: 4, y: 100 })
+  assert.deepEqual(size.keyframes[size.keyframes.length - 1].endValue, { x: 80, y: 100 })
+  assert.deepEqual(position.keyframes[0].startValue, { x: 2, y: 50 })
+  assert.deepEqual(position.keyframes[position.keyframes.length - 1].endValue, { x: 40, y: 50 })
+})
+
 test('根 Frame 水平翻转会映射 Motion 位移、旋转和缩放', () => {
   const root = {}
   const node = {
@@ -908,6 +995,56 @@ test('Group 子节点的 TRANSLATION_XY 不重复叠加父级平移', () => {
   }
   assert.deepEqual(position.keyframes[0].startValue, { x: 110, y: 70 })
   assert.deepEqual(position.keyframes[0].endValue, { x: 130, y: 80 })
+})
+
+test('旋转 Group 不改变子节点 TRANSLATION_XY 的坐标方向', () => {
+  const root = {}
+  const parent = {
+    type: 'GROUP',
+    parent: root,
+    absoluteTransform: [
+      [0, -1, 100],
+      [1, 0, 50],
+    ],
+  }
+  const node = {
+    id: '1:14',
+    name: '回击蒙板',
+    parent,
+    width: 80,
+    height: 102,
+    animations: {
+      TRANSLATION_XY: {
+        baseValue: { type: 'VECTOR', value: { x: 0, y: 0 } },
+        timelineDuration: 1,
+        tracks: [{
+          id: 'position',
+          keyframeOperation: 'SET',
+          keyframes: [
+            { id: 'start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'VECTOR', value: { x: 0, y: 0 } } },
+            { id: 'end', timelinePosition: 1, easing: { type: 'LINEAR' }, value: { type: 'VECTOR', value: { x: -20, y: 10 } } },
+          ],
+        }],
+      },
+    },
+    relativeTransform: [
+      [1, 0, 110],
+      [0, 1, 70],
+    ],
+  }
+  const transform = readMotionTransform(
+    node as unknown as SceneNode,
+    root as unknown as SceneNode,
+    10,
+    { position: { x: 110, y: 70 } },
+    [],
+    identityContext,
+  )
+  const position = transform.position as {
+    keyframes: Array<{ startValue: PagPoint; endValue: PagPoint }>
+  }
+  assert.deepEqual(position.keyframes[0].startValue, { x: 110, y: 70 })
+  assert.deepEqual(position.keyframes[0].endValue, { x: 90, y: 80 })
 })
 
 test('容器 Motion 会逐帧合成到后代图层', () => {

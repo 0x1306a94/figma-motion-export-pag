@@ -1,4 +1,4 @@
-import { readMotionTransform } from './motion'
+import { readShapeMotion } from './motion'
 import type { PagImage, PagImageLayer, PagLayer, PagTrackMatteType } from './pag/types'
 import { readShapeNode } from './shape'
 import type { ExportTransformContext } from './solid'
@@ -35,11 +35,11 @@ export async function readMaskMatte(
   if (shape !== null) {
     shape.active = false
     shape.name = `${node.name} Matte`
-    shape.transform = readMotionTransform(
+    shape = readShapeMotion(
       node,
       context.root,
       context.options.frameRate,
-      shape.transform,
+      shape,
       context.warnings,
       context.transformContext,
     )

@@ -130,8 +130,24 @@ export const solidFixture: PagComposition = {
       transform: {},
       geometry: {
         type: 'rectangle',
-        size: { x: 160, y: 90 },
-        position: { x: 80, y: 45 },
+        size: {
+          keyframes: [{
+            startTime: 0,
+            endTime: 15,
+            startValue: { x: 4, y: 90 },
+            endValue: { x: 160, y: 90 },
+            interpolation: 1,
+          }],
+        },
+        position: {
+          keyframes: [{
+            startTime: 0,
+            endTime: 15,
+            startValue: { x: 2, y: 45 },
+            endValue: { x: 80, y: 45 },
+            interpolation: 1,
+          }],
+        },
         roundness: 0,
       },
       fill: { color: { red: 255, green: 255, blue: 255 }, opacity: 255 },

@@ -2,7 +2,7 @@ import { encodePagFile } from './pag/encode-file'
 import type { PagComposition, PagImage, PagLayer, PagSolidLayer } from './pag/types'
 import { readLayerEffects } from './effect'
 import { applyImageFit, readImageNode, readImagePaintLayer } from './image'
-import { composeAncestorMotionTransform, readMotionTransform } from './motion'
+import { composeAncestorMotionTransform, readMotionTransform, readShapeMotion } from './motion'
 import {
   readInsideStrokeLayer,
   readOutsideStrokeLayer,
@@ -353,14 +353,16 @@ export async function exportSelection(
         if (layer === null) continue
         layer.id = nextId++
         layer.effects = effects
-        layer.transform = readMotionTransform(
+        const motionLayer = readShapeMotion(
           node,
           root,
           options.frameRate,
-          layer.transform,
+          layer,
           warnings,
           transformContext,
         )
+        layer.transform = motionLayer.transform
+        layer.geometry = motionLayer.geometry
         await appendLayer(node, ancestors, layer, mask)
       }
       return

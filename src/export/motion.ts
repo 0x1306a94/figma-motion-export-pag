@@ -3,6 +3,7 @@ import type {
   PagKeyframe,
   PagPoint,
   PagProperty,
+  PagShapeLayer,
   PagTransform,
 } from './pag/types'
 import type { ExportIssue } from './types'
@@ -12,6 +13,7 @@ import { multiplyTransform, readNodeTransform } from './solid'
 
 interface NodeMotionContext {
   parentToExportTransform: Transform
+  positionToExportTransform: Transform
   scaleX: number
   scaleY: number
   orientation: 1 | -1
@@ -81,6 +83,85 @@ export function readMotionTransform(
   context: ExportTransformContext,
   opacityMultiplier = 1,
 ): PagTransform {
+  return readMotionTransformInternal(
+    node,
+    _root,
+    frameRate,
+    transform,
+    warnings,
+    context,
+    opacityMultiplier,
+    false,
+  )
+}
+
+export function readShapeMotion(
+  node: SceneNode,
+  root: SceneNode,
+  frameRate: number,
+  layer: PagShapeLayer,
+  warnings: ExportIssue[],
+  context: ExportTransformContext,
+): PagShapeLayer {
+  if (layer.geometry.type === 'path') {
+    return {
+      ...layer,
+      transform: readMotionTransform(node, root, frameRate, layer.transform, warnings, context),
+    }
+  }
+  const transform = readMotionTransformInternal(
+    node,
+    root,
+    frameRate,
+    layer.transform,
+    warnings,
+    context,
+    1,
+    true,
+  )
+  const width = readGeometrySizeBinding(node, 'WIDTH', frameRate, warnings)
+  const height = readGeometrySizeBinding(node, 'HEIGHT', frameRate, warnings)
+  if (width === undefined && height === undefined) {
+    return { ...layer, transform }
+  }
+  const staticSize = getStaticPoint(layer.geometry.size, { x: node.width, y: node.height })
+  const staticPosition = getStaticPoint(layer.geometry.position, {
+    x: node.width / 2,
+    y: node.height / 2,
+  })
+  const size = combineNumberProperties(
+    width === undefined
+      ? staticSize.x
+      : mapNumberProperty(width, staticSize.x / node.width, 0),
+    height === undefined
+      ? staticSize.y
+      : mapNumberProperty(height, staticSize.y / node.height, 0),
+  )
+  const position = combineNumberProperties(
+    width === undefined
+      ? staticPosition.x
+      : mapNumberProperty(width, staticPosition.x / node.width, 0),
+    height === undefined
+      ? staticPosition.y
+      : mapNumberProperty(height, staticPosition.y / node.height, 0),
+  )
+  return {
+    ...layer,
+    transform,
+    geometry: { ...layer.geometry, size, position },
+  }
+}
+
+function readMotionTransformInternal(
+  node: SceneNode,
+  _root: SceneNode,
+  frameRate: number,
+  transform: PagTransform,
+  warnings: ExportIssue[],
+  context: ExportTransformContext,
+  opacityMultiplier: number,
+  sizeAsGeometry: boolean,
+): PagTransform {
   const animationFields = Object.keys(node.animations)
     .filter((field) => field !== 'effects')
     .filter((field) => node.animations[field as KeyframePropertyFieldName] !== undefined)
@@ -142,7 +223,7 @@ export function readMotionTransform(
     x: nodeContext.scaleX,
     y: nodeContext.scaleY * nodeContext.orientation,
   })
-  const width = readSizeBinding(
+  const width = sizeAsGeometry ? undefined : readSizeBinding(
     node,
     'WIDTH',
     frameRate,
@@ -150,7 +231,7 @@ export function readMotionTransform(
     node.width,
     staticScale.x,
   )
-  const height = readSizeBinding(
+  const height = sizeAsGeometry ? undefined : readSizeBinding(
     node,
     'HEIGHT',
     frameRate,
@@ -224,12 +305,21 @@ function createNodeMotionContext(
     parent !== null && 'absoluteTransform' in parent
       ? multiplyTransform(context.absoluteToExportTransform, parent.absoluteTransform)
       : context.rootToExportTransform
+  let positionParent = parent
+  while (positionParent?.type === 'GROUP') {
+    positionParent = positionParent.parent
+  }
+  const positionTransform =
+    positionParent !== null && 'absoluteTransform' in positionParent
+      ? multiplyTransform(context.absoluteToExportTransform, positionParent.absoluteTransform)
+      : context.rootToExportTransform
   const scaleX = Math.hypot(transform[0][0], transform[1][0])
   const scaleY = Math.hypot(transform[0][1], transform[1][1])
   const determinant =
     transform[0][0] * transform[1][1] - transform[0][1] * transform[1][0]
   return {
     parentToExportTransform: transform,
+    positionToExportTransform: positionTransform,
     scaleX,
     scaleY,
     orientation: determinant < 0 ? -1 : 1,
@@ -502,7 +592,7 @@ function roundMotionValue(value: number): number {
 }
 
 function mapPosition(point: PagPoint, context: NodeMotionContext): PagPoint {
-  const transform = context.parentToExportTransform
+  const transform = context.positionToExportTransform
   return {
     x: transform[0][0] * point.x + transform[0][1] * point.y + transform[0][2],
     y: transform[1][0] * point.x + transform[1][1] * point.y + transform[1][2],
@@ -514,7 +604,7 @@ function mapTranslation(
   staticPosition: PagPoint,
   context: NodeMotionContext,
 ): PagPoint {
-  const transform = context.parentToExportTransform
+  const transform = context.positionToExportTransform
   return {
     x: staticPosition.x + transform[0][0] * point.x + transform[0][1] * point.y,
     y: staticPosition.y + transform[1][0] * point.x + transform[1][1] * point.y,
@@ -526,7 +616,7 @@ function mapSeparatedPosition(
   y: PagProperty<number>,
   context: NodeMotionContext,
 ): { position?: PagProperty<PagPoint>; x?: PagProperty<number>; y?: PagProperty<number> } {
-  const transform = context.parentToExportTransform
+  const transform = context.positionToExportTransform
   const axisAligned =
     (Math.abs(transform[0][1]) < 0.0001 && Math.abs(transform[1][0]) < 0.0001) ||
     (Math.abs(transform[0][0]) < 0.0001 && Math.abs(transform[1][1]) < 0.0001)
@@ -768,6 +858,21 @@ function readSizeBinding(
   return readNumberBinding(node, field, frameRate, warnings, (value) => {
     if (value < 0) fail(node, `${field} 动画尺寸不能小于 0。`)
     return (value / staticSize) * staticScale
+  })
+}
+
+function readGeometrySizeBinding(
+  node: SceneNode,
+  field: 'WIDTH' | 'HEIGHT',
+  frameRate: number,
+  warnings: ExportIssue[],
+): PagProperty<number> | undefined {
+  if (node.animations[field] === undefined) return undefined
+  const staticSize = field === 'WIDTH' ? node.width : node.height
+  if (staticSize <= 0) fail(node, `${field} 动画要求节点静态尺寸大于 0。`)
+  return readNumberBinding(node, field, frameRate, warnings, (value) => {
+    if (value < 0) fail(node, `${field} 动画尺寸不能小于 0。`)
+    return value
   })
 }
 

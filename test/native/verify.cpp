@@ -82,6 +82,19 @@ int main(int argumentCount, char** arguments) {
     std::cerr << "track matte active state mismatch\n";
     return 1;
   }
+  auto matteShape = dynamic_cast<pag::ShapeLayer*>(matteLayer);
+  auto matteRectangle = matteShape == nullptr || matteShape->contents.empty()
+                            ? nullptr
+                            : dynamic_cast<pag::RectangleElement*>(matteShape->contents[0]);
+  if (matteRectangle == nullptr || matteRectangle->size == nullptr ||
+      !matteRectangle->size->animatable() || matteRectangle->position == nullptr ||
+      !matteRectangle->position->animatable() || matteRectangle->size->getValueAt(0).x != 4 ||
+      matteRectangle->size->getValueAt(15).x != 160 ||
+      matteRectangle->position->getValueAt(0).x != 2 ||
+      matteRectangle->position->getValueAt(15).x != 80) {
+    std::cerr << "animated matte geometry mismatch\n";
+    return 1;
+  }
   if (maskedLayer == nullptr || maskedLayer->masks.size() != 1 ||
       maskedLayer->masks[0]->maskMode != pag::MaskMode::Intersect ||
       !maskedLayer->masks[0]->inverted || maskedLayer->masks[0]->maskFeather == nullptr ||
