@@ -21,6 +21,19 @@ npm run pack
 
 `npm run test:native` 会链接已构建的 `build_libpag/libpag.a`，使用 `PAGFile::Load()` 验证 TypeScript 生成的 PAG 文件。
 
+## build libpag
+
+```bash
+git clone --depth 1 git@github.com:Tencent/libpag.git
+cd libpag
+./sync_deps.sh
+cd ..
+mkdir build_libpag
+
+cmake -DPAG_BUILD_CLI=ON -DPAG_BUILD_SHARED=OFF -DPAG_BUILD_FRAMEWORK=OFF -DCMAKE_BUILD_TYPE=Release -B build_libpag -S libpag
+cmake --build build_libpag --target pag -j$(sysctl -n hw.ncpu)
+```
+
 ## 当前支持
 
 - 导出帧率：24 / 30 / 60 fps，默认 30。
