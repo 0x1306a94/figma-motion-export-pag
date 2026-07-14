@@ -23,7 +23,7 @@ export interface MotionAnchor {
   y: number
 }
 
-const motionAnchorNamespace = 'pagx'
+const motionAnchorNamespace = 'pag'
 const motionAnchorKey = 'anchor'
 
 const supportedFields = new Set([
@@ -301,9 +301,9 @@ function readOpacity(node: SceneNode): number {
 function readTransformAt(transform: PagTransform, frame: number): Transform {
   const position = transform.position === undefined
     ? {
-        x: readNumberAt(transform.xPosition ?? 0, frame),
-        y: readNumberAt(transform.yPosition ?? 0, frame),
-      }
+      x: readNumberAt(transform.xPosition ?? 0, frame),
+      y: readNumberAt(transform.yPosition ?? 0, frame),
+    }
     : readPointAt(transform.position, frame)
   const anchor = readPointAt(transform.anchorPoint ?? { x: 0, y: 0 }, frame)
   const scale = readPointAt(transform.scale ?? { x: 1, y: 1 }, frame)
@@ -674,12 +674,12 @@ function evaluateProperty<T>(property: PagProperty<T>, frame: number, math: Valu
     const eased =
       keyframe.interpolation === 2 && keyframe.bezier !== undefined
         ? evaluateCubicBezier(
-            progress,
-            keyframe.bezier[0].out.x,
-            keyframe.bezier[0].out.y,
-            keyframe.bezier[0].in.x,
-            keyframe.bezier[0].in.y,
-          )
+          progress,
+          keyframe.bezier[0].out.x,
+          keyframe.bezier[0].out.y,
+          keyframe.bezier[0].in.x,
+          keyframe.bezier[0].in.y,
+        )
         : progress
     return math.interpolate(keyframe.startValue, keyframe.endValue, eased)
   }
