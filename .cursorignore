@@ -1,4 +1,3 @@
 # libpag 在 .gitignore 中，但仍需支持 @引用访问
-!/libpag/
-!libpag/**
-!/test_dev_export_samples/
+!/libpag/**
+!/test_dev_export_samples/**
