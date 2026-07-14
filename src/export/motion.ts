@@ -50,6 +50,8 @@ interface PreparedTrack<T> {
   operation: ManualKeyframeTrack['keyframeOperation']
   startFrame: number
   points: Array<{ frame: number; value: T; easing: MotionEasing | VariableAlias }>
+  sourcePoints: Array<{ frame: number; value: T; easing: MotionEasing | VariableAlias }>
+  sampleSubframes: boolean
 }
 
 const numberMath: ValueMath<number> = {
@@ -118,7 +120,8 @@ export function readMotionTransform(
 
   const rotation = readNumberBinding(node, 'ROTATION', frameRate, warnings)
   if (rotation !== undefined) {
-    result.rotation = mapNumberProperty(rotation, -nodeContext.orientation, nodeContext.rotation)
+    const staticRotation = getStaticNumber(transform.rotation, nodeContext.rotation)
+    result.rotation = mapNumberProperty(rotation, -nodeContext.orientation, staticRotation)
   }
   const opacity = readNumberBinding(
     node,
@@ -695,7 +698,17 @@ function readNumberBinding(
 ): PagProperty<number> | undefined {
   const binding = node.animations[field]
   if (binding === undefined) return undefined
-  return readNumberKeyframeBinding(node, binding, field, frameRate, warnings, mapValue)
+  const baseValue = field === 'ROTATION' ? readRotationBaseValue(node) : undefined
+  return readNumberKeyframeBinding(
+    node,
+    binding,
+    field,
+    frameRate,
+    warnings,
+    mapValue,
+    baseValue,
+    true,
+  )
 }
 
 export function readNumberKeyframeBinding(
@@ -705,13 +718,23 @@ export function readNumberKeyframeBinding(
   frameRate: number,
   warnings: ExportIssue[],
   mapValue: (value: number) => number = (value) => value,
+  baseValue?: number,
+  preserveSubframes = false,
 ): PagProperty<number> {
   const property = readBinding(node, binding, frameRate, warnings, (value) => {
     if (value.type !== 'FLOAT') fail(node, `${field} 必须使用 FLOAT 关键帧值。`)
     if (!Number.isFinite(value.value)) fail(node, `${field} 包含无效数值。`)
     return value.value
-  }, numberMath, 1)
+  }, numberMath, 1, baseValue, preserveSubframes)
   return mapPropertyValues(property, mapValue)
+}
+
+function readRotationBaseValue(node: SceneNode): number {
+  const manualTracks = (node as SceneNode & { manualKeyframeTracks?: ManualKeyframeTracks })
+    .manualKeyframeTracks
+  const baseValue = manualTracks?.ROTATION?.baseValue
+  if (baseValue?.type !== 'FLOAT' || !Number.isFinite(baseValue.value)) return 0
+  return baseValue.value
 }
 
 function readPointBinding(
@@ -729,7 +752,7 @@ function readPointBinding(
       fail(node, `${field} 包含无效数值。`)
     }
     return { x: value.value.x, y: value.value.y }
-  }, pointMath, dimensions)
+  }, pointMath, dimensions, undefined, true)
 }
 
 function readSizeBinding(
@@ -756,10 +779,19 @@ function readBinding<T>(
   readValue: (value: KeyframeValue) => T,
   math: ValueMath<T>,
   dimensions: number,
+  baseValueOverride?: T,
+  preserveSubframes = false,
 ): PagProperty<T> {
-  const baseValue = readValue(binding.baseValue)
+  const baseValue = baseValueOverride ?? readValue(binding.baseValue)
   const tracks = binding.tracks.map((track) =>
-    prepareTrack(node, track, frameRate, warnings, readValue),
+    prepareTrack(
+      node,
+      track,
+      frameRate,
+      warnings,
+      readValue,
+      preserveSubframes,
+    ),
   )
   if (tracks.length === 0) return baseValue
   if (tracks.length > 1) {
@@ -768,6 +800,9 @@ function readBinding<T>(
 
   const track = tracks[0]
   if (track.points.length === 0) return baseValue
+  if (track.sampleSubframes) {
+    return sampleTrack(node, binding, track, baseValue, frameRate, math)
+  }
   const points = new Map<number, { value: T; easing?: MotionEasing | VariableAlias }>()
   const firstPoint = track.points[0]
   const firstValue = applyOperation(baseValue, firstPoint.value, track.operation, math)
@@ -810,32 +845,102 @@ function prepareTrack<T>(
   frameRate: number,
   warnings: ExportIssue[],
   readValue: (value: KeyframeValue) => T,
+  preserveSubframes: boolean,
 ): PreparedTrack<T> {
   const timelineOffset = getTimelineOffset(node, track)
   const points = new Map<number, PreparedTrack<T>['points'][number]>()
+  const sourcePoints: PreparedTrack<T>['sourcePoints'] = []
+  let hasCollision = false
   for (const keyframe of track.keyframes) {
     if (!Number.isFinite(keyframe.timelinePosition) || keyframe.timelinePosition < 0) {
       fail(node, 'Motion 关键帧时间必须是非负有限数。')
     }
-    const frame = Math.round((keyframe.timelinePosition + timelineOffset) * frameRate)
+    const sourceFrame = (keyframe.timelinePosition + timelineOffset) * frameRate
+    const frame = Math.round(sourceFrame)
     if (points.has(frame)) {
+      hasCollision = true
       warnings.push({
         nodeId: node.id,
         nodeName: node.name,
-        message: `第 ${frame} 帧存在关键帧碰撞，已保留后写入的值。`,
+        message: preserveSubframes
+          ? `第 ${frame} 帧存在关键帧碰撞，将按整数帧采样。`
+          : `第 ${frame} 帧存在关键帧碰撞，已保留后写入的值。`,
       })
     }
-    points.set(frame, {
+    const point = {
       frame,
       value: readValue(keyframe.value),
       easing: keyframe.easing,
-    })
+    }
+    points.set(frame, point)
+    sourcePoints.push({ ...point, frame: sourceFrame })
   }
+  sourcePoints.sort((left, right) => left.frame - right.frame)
+  const firstSourceFrame = sourcePoints[0]?.frame
   return {
     operation: track.keyframeOperation,
     startFrame: Math.round(timelineOffset * frameRate),
     points: [...points.values()].sort((left, right) => left.frame - right.frame),
+    sourcePoints,
+    sampleSubframes:
+      preserveSubframes && (
+        hasCollision ||
+        (
+          firstSourceFrame !== undefined &&
+          firstSourceFrame > 0 &&
+          Math.round(firstSourceFrame) === 0
+        )
+      ),
   }
+}
+
+function sampleTrack<T>(
+  node: SceneNode,
+  binding: KeyframeBinding,
+  track: PreparedTrack<T>,
+  baseValue: T,
+  frameRate: number,
+  math: ValueMath<T>,
+): PagProperty<T> {
+  if (!Number.isFinite(binding.timelineDuration) || binding.timelineDuration < 0) {
+    fail(node, 'Motion timelineDuration 必须是非负有限数。')
+  }
+  const lastSourceFrame = track.sourcePoints[track.sourcePoints.length - 1]?.frame ?? 0
+  const lastFrame = Math.max(Math.round(binding.timelineDuration * frameRate), Math.ceil(lastSourceFrame))
+  const values = Array.from({ length: lastFrame + 1 }, (_, frame) => {
+    const trackValue = evaluateSourceTrack(node, track, frame, math)
+    return trackValue === undefined
+      ? baseValue
+      : applyOperation(baseValue, trackValue, track.operation, math)
+  })
+  return makeSampledProperty(values, math)
+}
+
+function evaluateSourceTrack<T>(
+  node: SceneNode,
+  track: PreparedTrack<T>,
+  frame: number,
+  math: ValueMath<T>,
+): T | undefined {
+  const points = track.sourcePoints
+  if (points.length === 0) return undefined
+  const firstPoint = points[0]
+  if (frame < firstPoint.frame) return firstPoint.value
+  const lastPoint = points[points.length - 1]
+  if (frame >= lastPoint.frame) return lastPoint.value
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index]
+    const end = points[index + 1]
+    if (end.frame <= start.frame) {
+      continue
+    }
+    if (frame > end.frame) {
+      continue
+    }
+    const progress = (frame - start.frame) / (end.frame - start.frame)
+    return math.interpolate(start.value, end.value, evaluateEasing(node, start.easing, progress))
+  }
+  return lastPoint.value
 }
 
 function getTimelineOffset(node: SceneNode, track: ManualKeyframeTrack): number {
@@ -1017,6 +1122,10 @@ function numberToPointProperty(
 }
 
 function getStaticPoint(property: PagProperty<PagPoint> | undefined, fallback: PagPoint): PagPoint {
+  return property !== undefined && !isAnimated(property) ? property : fallback
+}
+
+function getStaticNumber(property: PagProperty<number> | undefined, fallback: number): number {
   return property !== undefined && !isAnimated(property) ? property : fallback
 }
 

@@ -25,7 +25,7 @@ const identityContext: ExportTransformContext = {
   rotation: 0,
 }
 
-test('Motion 秒数转帧、碰撞保留后值并生成 N-1 段', () => {
+test('Motion 关键帧碰撞时按整数帧采样', () => {
   const root = {}
   const node = {
     id: '1:2',
@@ -70,15 +70,18 @@ test('Motion 秒数转帧、碰撞保留后值并生成 N-1 段', () => {
     warnings,
     identityContext,
   )
-  const xPosition = transform.xPosition as { keyframes: Array<{ endTime: number; endValue: number }> }
+  const xPosition = transform.xPosition as {
+    keyframes: Array<{ startTime: number; endTime: number; startValue: number; endValue: number }>
+  }
   assert.equal(warnings.length, 1)
-  assert.equal(xPosition.keyframes.length, 2)
   assert.deepEqual(
-    xPosition.keyframes.map((keyframe) => [keyframe.endTime, keyframe.endValue]),
-    [
-      [12, 20],
-      [24, 30],
-    ],
+    xPosition.keyframes.slice(12, 14).map((keyframe) => [
+      keyframe.startTime,
+      keyframe.endTime,
+      keyframe.startValue,
+      keyframe.endValue,
+    ]),
+    [[12, 13, 10, 20], [13, 14, 20, 20]],
   )
   assert.equal(transform.yPosition, 5)
 })
@@ -330,6 +333,177 @@ test('Motion Rotation 转换旋转方向并保持节点中心不动', () => {
   assert.deepEqual(transform.anchorPoint, { x: 221, y: 117.5 })
   assert.deepEqual(transform.position, { x: 778, y: 618.5 })
   assert.deepEqual([rotation.keyframes[0].startValue, rotation.keyframes[0].endValue], [-180, 0])
+})
+
+test('Motion Rotation 叠加静态旋转并保留零秒关键帧', () => {
+  const root = {}
+  const node = {
+    id: '50:4',
+    name: 'blue_racket',
+    parent: root,
+    width: 111.82207489013672,
+    height: 160.38414001464844,
+    manualKeyframeTracks: {
+      ROTATION: {
+        baseValue: { type: 'FLOAT', value: 0 },
+      },
+    },
+    animations: {
+      ROTATION: {
+        baseValue: { type: 'FLOAT', value: 40.98282867419254 },
+        timelineDuration: 3.317382,
+        tracks: [{
+          id: 'rotation',
+          keyframeOperation: 'SET',
+          keyframes: [
+            { id: 'start', timelinePosition: 0, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 5 } },
+            { id: 'near-start', timelinePosition: 0.000082, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 31 } },
+            { id: 'end', timelinePosition: 0.728664, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: -3 } },
+          ],
+        }],
+      },
+    },
+    relativeTransform: [
+      [0.754906177520752, 0.655832827091217, 65.99951171875],
+      [-0.655832827091217, 0.754906177520752, 73.3369140625],
+    ],
+  }
+  const transform = readMotionTransform(
+    node as unknown as SceneNode,
+    root as FrameNode,
+    30,
+    { position: { x: 65.99951171875, y: 73.3369140625 }, rotation: -40.98282867419254 },
+    [],
+    identityContext,
+  )
+  const rotation = transform.rotation as { keyframes: Array<{ startValue: number }> }
+  assert.ok(Math.abs(rotation.keyframes[0].startValue + 45.98282867419254) < 0.0001)
+})
+
+test('近零时间的 Position 关键帧吸附到首帧', () => {
+  const root = {}
+  const node = {
+    id: '50:65',
+    name: 'Ellipse 4',
+    parent: root,
+    animations: {
+      TRANSLATION_XY: {
+        baseValue: { type: 'VECTOR', value: { x: 0, y: 0 } },
+        timelineDuration: 3.317382,
+        tracks: [{
+          id: 'position',
+          keyframeOperation: 'SET',
+          keyframes: [
+            {
+              id: 'start',
+              timelinePosition: 0.000082,
+              easing: { type: 'LINEAR' },
+              value: { type: 'VECTOR', value: { x: -238, y: -159.9997 } },
+            },
+            {
+              id: 'end',
+              timelinePosition: 0.757221,
+              easing: { type: 'LINEAR' },
+              value: { type: 'VECTOR', value: { x: -286.54449462890625, y: -92.32495880126953 } },
+            },
+          ],
+        }],
+      },
+    },
+    relativeTransform: [
+      [1, 0, 362],
+      [0, 1, 226],
+    ],
+  }
+  const transform = readMotionTransform(
+    node as unknown as SceneNode,
+    root as FrameNode,
+    30,
+    { position: { x: 362, y: 226 } },
+    [],
+    identityContext,
+  )
+  const position = transform.position as { keyframes: Array<{ startValue: PagPoint }> }
+  assert.equal(position.keyframes[0].startValue.x, 124)
+  assert.ok(Math.abs(position.keyframes[0].startValue.y - 66.0003) < 0.0001)
+})
+
+test('组合 Transform 的半帧内关键帧统一吸附到首帧', () => {
+  const root = {}
+  const node = {
+    id: '50:67',
+    name: 'red_racket',
+    parent: root,
+    width: 168,
+    height: 240.95899963378906,
+    manualKeyframeTracks: {
+      ROTATION: {
+        baseValue: { type: 'FLOAT', value: 0 },
+      },
+    },
+    animations: {
+      TRANSLATION_XY: {
+        baseValue: { type: 'VECTOR', value: { x: 0, y: 0 } },
+        timelineDuration: 3.317382,
+        tracks: [{
+          id: 'position',
+          keyframeOperation: 'SET',
+          keyframes: [
+            {
+              id: 'start',
+              timelinePosition: 0,
+              easing: { type: 'LINEAR' },
+              value: { type: 'VECTOR', value: { x: -15.6456, y: 34.6346 } },
+            },
+            {
+              id: 'end',
+              timelinePosition: 1.751241,
+              easing: { type: 'LINEAR' },
+              value: { type: 'VECTOR', value: { x: -5.262, y: 15.5518 } },
+            },
+          ],
+        }],
+      },
+      ROTATION: {
+        baseValue: { type: 'FLOAT', value: -21.067527737584467 },
+        timelineDuration: 3.317382,
+        tracks: [{
+          id: 'rotation',
+          keyframeOperation: 'SET',
+          keyframes: [
+            { id: 'start', timelinePosition: 0.007897, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 26 } },
+            { id: 'end', timelinePosition: 1.973929, easing: { type: 'LINEAR' }, value: { type: 'FLOAT', value: 6 } },
+          ],
+        }],
+      },
+    },
+    relativeTransform: [
+      [0.9331574440002441, -0.359468013048172, 412.6177978515625],
+      [0.359468013048172, 0.9331574440002441, 135.99977111816406],
+    ],
+  }
+  const transform = readMotionTransform(
+    node as unknown as SceneNode,
+    root as FrameNode,
+    30,
+    { position: { x: 412.6177978515625, y: 135.99977111816406 }, rotation: 21.067527737584467 },
+    [],
+    identityContext,
+  )
+  const rotation = transform.rotation as { keyframes: Array<{ startValue: number }> }
+  assert.ok(Math.abs(rotation.keyframes[0].startValue + 4.932472262415533) < 0.0001)
+  const position = transform.position as { keyframes: Array<{ startValue: PagPoint }> }
+  const anchor = transform.anchorPoint as PagPoint
+  const expectedPosition = {
+    x: node.relativeTransform[0][2] - 15.6456 +
+      node.relativeTransform[0][0] * anchor.x +
+      node.relativeTransform[0][1] * anchor.y,
+    y: node.relativeTransform[1][2] + 34.6346 +
+      node.relativeTransform[1][0] * anchor.x +
+      node.relativeTransform[1][1] * anchor.y,
+  }
+  assert.ok(Math.abs(position.keyframes[0].startValue.x - expectedPosition.x) < 0.0001)
+  assert.ok(Math.abs(position.keyframes[0].startValue.y - expectedPosition.y) < 0.0001)
 })
 
 test('纯 SET SCALE_XY 从当前渲染边界推导并缓存 Motion 锚点', () => {
