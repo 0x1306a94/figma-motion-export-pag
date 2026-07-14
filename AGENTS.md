@@ -5,6 +5,58 @@
 - 标题保持简短、清晰，让人能直接感知改动内容。
 - 改动过于复杂时，使用正文补充背景、原因和影响，不要把细节全部塞进标题。
 
+## 编码规范
+
+### 禁止单行 `if` / `for`
+
+控制流必须使用花括号，且语句另起一行。禁止把主体写在同一行。
+
+```typescript
+// ❌
+if (layer.type === 'text') continue
+for (const mask of masks) writeMask(stream, mask)
+
+// ✅
+if (layer.type === 'text') {
+  continue
+}
+for (const mask of masks) {
+  writeMask(stream, mask)
+}
+```
+
+### 尽量减少字符串字面量，多用 TypeScript 类型系统
+
+判别联合、枚举映射、查表优先于散落的字符串比较与嵌套三元。字面量只在类型定义处出现一次，业务代码通过类型、`Record`、`switch` 收窄使用。
+
+```typescript
+// ❌ 嵌套三元 / 重复散落字面量
+content.writeUint8(
+  layer.type === 'solid'
+    ? LayerType.Solid
+    : layer.type === 'shape'
+      ? LayerType.Shape
+      : LayerType.Image,
+)
+
+// ✅ 字面量集中在类型与映射表；调用处靠类型系统
+const layerTypeCodes: Record<PagLayer['type'], LayerType> = {
+  solid: LayerType.Solid,
+  shape: LayerType.Shape,
+  text: LayerType.Text,
+  image: LayerType.Image,
+  precompose: LayerType.PreCompose,
+}
+content.writeUint8(layerTypeCodes[layer.type])
+
+switch (layer.type) {
+  case 'solid':
+    writeSolidColor(content, layer)
+    break
+  // ...
+}
+```
+
 <!-- CODEGRAPH_START -->
 ## CodeGraph
 

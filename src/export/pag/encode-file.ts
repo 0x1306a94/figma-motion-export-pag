@@ -44,6 +44,14 @@ const enum LayerType {
   PreCompose = 6,
 }
 
+const layerTypeCodes: Record<PagLayer['type'], LayerType> = {
+  solid: LayerType.Solid,
+  shape: LayerType.Shape,
+  text: LayerType.Text,
+  image: LayerType.Image,
+  precompose: LayerType.PreCompose,
+}
+
 export function encodePagFile(composition: PagComposition): Uint8Array {
   const body = new EncodeStream()
   const fontIds = writeFontTables(body, composition)
@@ -99,32 +107,34 @@ function writeCompositionAttributes(stream: EncodeStream, composition: PagCompos
 
 function writeLayer(stream: EncodeStream, layer: PagLayer, fontIds: Map<string, number>): void {
   writeTag(stream, TagCode.LayerBlock, (content) => {
-    content.writeUint8(
-      layer.type === 'solid'
-        ? LayerType.Solid
-        : layer.type === 'shape'
-          ? LayerType.Shape
-          : layer.type === 'text'
-            ? LayerType.Text
-            : layer.type === 'precompose'
-              ? LayerType.PreCompose
-            : LayerType.Image,
-    )
+    content.writeUint8(layerTypeCodes[layer.type])
     content.writeEncodedUint(layer.id)
     writeLayerAttributes(content, layer)
     for (const mask of layer.masks ?? []) writeMask(content, mask)
     for (const effect of layer.effects ?? []) writeFastBlurEffect(content, effect)
     writeTransform(content, layer.transform)
-    if (layer.type === 'solid') writeSolidColor(content, layer)
-    else if (layer.type === 'shape') writeShape(content, layer)
-    else if (layer.type === 'text') writeTextSource(content, layer.sourceText, fontIds)
-    else if (layer.type === 'precompose') {
-      writeTag(content, TagCode.CompositionReference, (reference) => {
-        reference.writeEncodedUint(layer.compositionId)
-        reference.writeEncodedUint(layer.compositionStartTime)
-      })
+    switch (layer.type) {
+      case 'solid':
+        writeSolidColor(content, layer)
+        break
+      case 'shape':
+        writeShape(content, layer)
+        break
+      case 'text':
+        writeTextSource(content, layer.sourceText, fontIds)
+        break
+      case 'precompose':
+        writeTag(content, TagCode.CompositionReference, (reference) => {
+          reference.writeEncodedUint(layer.compositionId)
+          reference.writeEncodedUint(layer.compositionStartTime)
+        })
+        break
+      case 'image':
+        writeTag(content, TagCode.ImageReference, (reference) => {
+          reference.writeEncodedUint(layer.imageId)
+        })
+        break
     }
-    else writeTag(content, TagCode.ImageReference, (reference) => reference.writeEncodedUint(layer.imageId))
     writeEndTag(content)
   })
 }
